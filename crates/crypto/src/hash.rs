@@ -21,13 +21,32 @@
 
 use arknet_common::Hash256;
 use blake3::Hasher as Blake3Hasher;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+
+fn serialize_hash256_as_hex<S: Serializer>(h: &Hash256, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&hex::encode(h))
+}
+
+fn deserialize_hash256_from_hex<'de, D: Deserializer<'de>>(d: D) -> Result<Hash256, D::Error> {
+    let s = String::deserialize(d)?;
+    let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+    bytes
+        .try_into()
+        .map_err(|_| serde::de::Error::custom("expected 32-byte hex string"))
+}
 
 // ─── SHA-256 ─────────────────────────────────────────────────────────────
 
 /// Typed SHA-256 output. Distinct from [`Blake3Digest`] to prevent mix-ups.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub struct Sha256Digest(pub Hash256);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
+pub struct Sha256Digest(
+    #[serde(
+        serialize_with = "serialize_hash256_as_hex",
+        deserialize_with = "deserialize_hash256_from_hex"
+    )]
+    pub Hash256,
+);
 
 impl Sha256Digest {
     /// Raw bytes.
@@ -81,8 +100,14 @@ impl Sha256Stream {
 // ─── BLAKE3 ───────────────────────────────────────────────────────────────
 
 /// Typed BLAKE3 output. Distinct from [`Sha256Digest`] to prevent mix-ups.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub struct Blake3Digest(pub Hash256);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
+pub struct Blake3Digest(
+    #[serde(
+        serialize_with = "serialize_hash256_as_hex",
+        deserialize_with = "deserialize_hash256_from_hex"
+    )]
+    pub Hash256,
+);
 
 impl Blake3Digest {
     /// Raw bytes.
