@@ -84,6 +84,14 @@ fn build_llama_cpp(vendor: &Path, backend: GpuBackend) -> PathBuf {
     // Static libs keep the final binary self-contained; no separate .so
     // files to ship. llama.cpp defaults to shared on some platforms so
     // we flip it explicitly.
+    //
+    // GGML_OPENMP=OFF is load-bearing: on Linux GCC, CMake auto-enables
+    // OpenMP and ggml-cpu.c then references `GOMP_barrier` / `GOMP_parallel`
+    // which require `-lgomp` at link time. macOS Clang ships without OMP
+    // by default, so the macOS build already uses ggml's native thread
+    // pool. Disabling here keeps both platforms on the same backend and
+    // avoids a non-determinism source in reduction order — important
+    // for the verifier path.
     cmake_cfg
         .define("BUILD_SHARED_LIBS", "OFF")
         .define("LLAMA_BUILD_TESTS", "OFF")
@@ -91,6 +99,7 @@ fn build_llama_cpp(vendor: &Path, backend: GpuBackend) -> PathBuf {
         .define("LLAMA_BUILD_SERVER", "OFF")
         .define("LLAMA_CURL", "OFF")
         .define("GGML_BUILD_TESTS", "OFF")
+        .define("GGML_OPENMP", "OFF")
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         .profile("Release");
 
