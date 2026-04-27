@@ -134,19 +134,31 @@ fn emit_link_flags(dst: &Path, backend: GpuBackend) {
         dst.join("build").join("ggml").join("src").display()
     );
 
-    // Primary libraries. Order matters: link the higher-level ones first
-    // so their unresolved symbols are found in the lower-level ones.
-    let libs = ["llama", "ggml", "ggml-cpu", "ggml-base"];
-    for name in libs {
+    // Primary libraries. Order matters for static linking: higher-level
+    // archives must come before the lower-level ones they depend on so
+    // the linker resolves symbols in a single pass.
+    //
+    // On macOS the default build includes BLAS offload (libggml-blas),
+    // which must be linked; omitting it leaves `_ggml_backend_blas_reg`
+    // unresolved. It's harmless on Linux (archive just isn't there).
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let mut static_libs: Vec<&str> = vec!["llama"];
+    if target_os == "macos" {
+        static_libs.push("ggml-blas");
+    }
+    static_libs.extend(["ggml", "ggml-cpu", "ggml-base"]);
+    for name in &static_libs {
         println!("cargo:rustc-link-lib=static={name}");
     }
 
     // Platform-specific system libs llama.cpp / ggml need.
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     match target_os.as_str() {
         "macos" => {
             println!("cargo:rustc-link-lib=framework=Accelerate");
             println!("cargo:rustc-link-lib=framework=Foundation");
+            // Apple's Clang ships libc++ (and its unwinder/personality
+            // symbols) — llama.cpp is C++ and needs them.
+            println!("cargo:rustc-link-lib=dylib=c++");
             if backend == GpuBackend::Metal {
                 println!("cargo:rustc-link-lib=framework=Metal");
                 println!("cargo:rustc-link-lib=framework=MetalKit");
@@ -170,14 +182,27 @@ fn generate_bindings(vendor: &Path, header: &Path) {
         .header(header.to_string_lossy())
         .clang_arg(format!("-I{}", vendor.join("include").display()))
         .clang_arg(format!("-I{}", vendor.join("ggml/include").display()))
-        // Only expose the `llama_*` surface; skip ggml internals, libc, etc.
+        // Expose the `llama_*` surface and the handful of ggml_* types
+        // that appear in llama.h signatures (log callback, numa strategy).
         .allowlist_function("llama_.*")
         .allowlist_type("llama_.*")
         .allowlist_var("LLAMA_.*")
-        // C enums to Rust; rustified enums give us pattern matching + exhaustiveness.
+        .allowlist_type("ggml_log_callback")
+        .allowlist_type("ggml_log_level")
+        .allowlist_type("ggml_numa_strategy")
+        // C enums to Rust; rustified non-exhaustive enums give us pattern
+        // matching while tolerating new variants from upstream bumps.
         .rustified_non_exhaustive_enum("llama_.*")
+        .rustified_non_exhaustive_enum("ggml_.*")
         .derive_default(true)
         .derive_debug(true)
+        // Keep signed integer types as Rust ints (i32, i64) rather than
+        // libc's c_int / c_long wrappers; downstream code reads cleaner.
+        .default_enum_style(bindgen::EnumVariation::Rust {
+            non_exhaustive: true,
+        })
+        .generate_comments(false)
+        .layout_tests(false)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .expect("bindgen failed to parse llama.h");

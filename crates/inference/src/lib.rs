@@ -39,12 +39,26 @@
 
 mod sys;
 
+pub mod backend;
 pub mod checkpoint;
 pub mod config;
+pub mod context;
+pub mod engine;
 pub mod errors;
 pub mod events;
+pub mod model;
+pub mod sampling;
+pub mod session;
+pub mod tokenizer;
 
+pub use backend::{init_once, BackendCapabilities};
 pub use checkpoint::{CheckpointableSession, Phase0CheckpointStub};
 pub use config::{InferenceConfig, InferenceMode, SamplingParams};
+pub use context::{Context, ContextParams};
+pub use engine::{InferenceEngine, InferenceRequest, ModelHandle};
 pub use errors::{InferenceError, Result};
 pub use events::{InferenceEvent, StopReason, TokenEvent};
+pub use model::{Model, ModelLoadParams};
+pub use sampling::Sampler;
+pub use session::{EventSink, Session, SessionOutcome, SessionRequest};
+pub use tokenizer::{PieceBuffer, Token, Tokenizer};
