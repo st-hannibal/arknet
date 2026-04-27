@@ -5,14 +5,30 @@ edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
 repository    = { workspace = true }
-description   = "llama.cpp FFI-backed inference engine with continuous batching and streaming."
+description   = "llama.cpp FFI-backed inference engine with streaming and deterministic verification mode."
+links         = "llama"
 
 [dependencies]
 arknet-common        = { workspace = true }
 arknet-crypto        = { workspace = true }
 arknet-model-manager = { workspace = true }
-tokio                = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
 bytes                = { workspace = true }
-# llama-cpp-2 added in Phase 0 Week 7 once the CMake build is configured.
+serde                = { workspace = true }
+tokio                = { workspace = true }
+tokio-util           = { workspace = true }
+tokio-stream         = "0.1"
+futures              = { workspace = true }
+parking_lot          = { workspace = true }
+async-trait          = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.10"
+tokio    = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+hex      = { workspace = true }
+url      = { version = "2.5", features = ["serde"] }
+
+[build-dependencies]
+bindgen = "0.70"
+cmake   = "0.1"

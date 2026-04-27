@@ -59,3 +59,28 @@ install-dev-tools:
 # Run the node locally with default config
 run *args:
     cargo run --bin arknet -- {{args}}
+
+# ── inference (llama.cpp) ──────────────────────────────────────────────
+# GPU backend is selected via the ARKNET_INFERENCE_GPU env var (not a
+# cargo feature), so `cargo build --all-features` doesn't try to compile
+# CUDA on a Mac laptop.
+#
+# Values: cpu (default), cuda, metal, rocm, vulkan.
+
+# CPU-only build. Default for dev + CI + verification path.
+inference:
+    cargo build -p arknet-inference
+
+# Apple-Silicon dev mode with Metal GPU. Compute-node only — the
+# verifier path still uses the CPU build.
+inference-metal:
+    ARKNET_INFERENCE_GPU=metal cargo build -p arknet-inference
+
+# NVIDIA CUDA dev mode. Compute-node only.
+inference-cuda:
+    ARKNET_INFERENCE_GPU=cuda cargo build -p arknet-inference
+
+# Refresh the vendored llama.cpp submodule to the pinned SHA. Run
+# after a fresh clone or after pulling a commit that bumps the pin.
+submodules:
+    git submodule update --init --recursive
