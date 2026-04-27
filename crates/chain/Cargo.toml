@@ -1,0 +1,17 @@
+[package]
+name          = "arknet-chain"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "arknet L1 chain: blocks, state trie, transactions, fee market."
+
+[dependencies]
+arknet-common  = { workspace = true }
+arknet-crypto  = { workspace = true }
+borsh          = { workspace = true }
+serde          = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+thiserror      = { workspace = true }

@@ -1,0 +1,27 @@
+[package]
+name          = "arknet-crypto"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "Cryptographic primitives used by arknet: hashing, signatures, VRF, threshold crypto."
+
+[dependencies]
+arknet-common        = { workspace = true }
+sha2                 = { workspace = true }
+blake3               = { workspace = true }
+ed25519-dalek        = { workspace = true }
+x25519-dalek         = { workspace = true }
+aes-gcm              = { workspace = true }
+chacha20poly1305     = { workspace = true }
+rand                 = { workspace = true }
+rand_core            = { workspace = true }
+subtle               = { workspace = true }
+zeroize              = { workspace = true }
+argon2               = { workspace = true }
+hex                  = { workspace = true }
+thiserror            = { workspace = true }
+
+[dev-dependencies]
+proptest             = { workspace = true }

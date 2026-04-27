@@ -1,0 +1,16 @@
+[package]
+name          = "arknet-cli"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "Operator CLI subcommands: model, node, pool, stake, wallet."
+
+[dependencies]
+arknet-common = { workspace = true }
+arknet-sdk    = { workspace = true }
+clap          = { workspace = true }
+tokio         = { workspace = true }
+anyhow        = { workspace = true }
+tracing       = { workspace = true }

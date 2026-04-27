@@ -1,0 +1,7 @@
+[build]
+# Use a faster linker on Linux when available.
+# Override in your own ~/.cargo/config.toml if lld is not installed.
+
+[alias]
+x = "clippy --workspace --all-targets --all-features -- -D warnings"
+t = "nextest run --workspace --all-features"

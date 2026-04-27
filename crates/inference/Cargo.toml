@@ -1,0 +1,18 @@
+[package]
+name          = "arknet-inference"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "llama.cpp FFI-backed inference engine with continuous batching and streaming."
+
+[dependencies]
+arknet-common        = { workspace = true }
+arknet-crypto        = { workspace = true }
+arknet-model-manager = { workspace = true }
+tokio                = { workspace = true }
+thiserror            = { workspace = true }
+tracing              = { workspace = true }
+bytes                = { workspace = true }
+# llama-cpp-2 added in Phase 0 Week 7 once the CMake build is configured.

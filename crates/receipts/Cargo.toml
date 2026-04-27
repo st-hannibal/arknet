@@ -1,0 +1,14 @@
+[package]
+name          = "arknet-receipts"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "Inference receipt aggregation, Merkle batching, and L1 anchoring."
+
+[dependencies]
+arknet-common   = { workspace = true }
+arknet-crypto   = { workspace = true }
+borsh           = { workspace = true }
+thiserror       = { workspace = true }

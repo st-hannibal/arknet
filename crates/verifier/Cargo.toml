@@ -1,0 +1,17 @@
+[package]
+name          = "arknet-verifier"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "L2 verifier role: three-tier output verification via VRF selection."
+
+[dependencies]
+arknet-common    = { workspace = true }
+arknet-crypto    = { workspace = true }
+arknet-network   = { workspace = true }
+arknet-inference = { workspace = true }
+tokio            = { workspace = true }
+thiserror        = { workspace = true }
+tracing          = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name          = "arknet-router"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "L2 router role: request intake, node selection, failover, receipt aggregation."
+
+[dependencies]
+arknet-common   = { workspace = true }
+arknet-network  = { workspace = true }
+arknet-crypto   = { workspace = true }
+tokio           = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }

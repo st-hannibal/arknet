@@ -1,0 +1,14 @@
+[package]
+name          = "arknet-payments"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "Escrow and payment channels for streaming micro-payments."
+
+[dependencies]
+arknet-common = { workspace = true }
+arknet-crypto = { workspace = true }
+arknet-chain  = { workspace = true }
+thiserror     = { workspace = true }

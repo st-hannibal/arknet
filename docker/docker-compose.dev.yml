@@ -1,0 +1,60 @@
+# Local 3-node devnet for development.
+# Usage: docker compose -f docker/docker-compose.dev.yml up
+
+services:
+  node-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.node
+    container_name: arknet-node-1
+    command: ["start"]
+    environment:
+      ARKNET_NETWORK: devnet
+    volumes:
+      - node-1-data:/var/lib/arknet
+    ports:
+      - "8081:8080"
+      - "26661:26656"
+      - "9091:9090"
+    networks: [arknet-devnet]
+
+  node-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.node
+    container_name: arknet-node-2
+    command: ["start"]
+    environment:
+      ARKNET_NETWORK: devnet
+    volumes:
+      - node-2-data:/var/lib/arknet
+    ports:
+      - "8082:8080"
+      - "26662:26656"
+      - "9092:9090"
+    networks: [arknet-devnet]
+
+  node-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.node
+    container_name: arknet-node-3
+    command: ["start"]
+    environment:
+      ARKNET_NETWORK: devnet
+    volumes:
+      - node-3-data:/var/lib/arknet
+    ports:
+      - "8083:8080"
+      - "26663:26656"
+      - "9093:9090"
+    networks: [arknet-devnet]
+
+volumes:
+  node-1-data:
+  node-2-data:
+  node-3-data:
+
+networks:
+  arknet-devnet:
+    driver: bridge

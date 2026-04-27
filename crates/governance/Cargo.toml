@@ -1,0 +1,13 @@
+[package]
+name          = "arknet-governance"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "On-chain governance: proposals, voting, parameter changes, upgrades."
+
+[dependencies]
+arknet-common = { workspace = true }
+arknet-chain  = { workspace = true }
+thiserror     = { workspace = true }

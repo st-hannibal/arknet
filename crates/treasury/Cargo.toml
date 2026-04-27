@@ -1,0 +1,13 @@
+[package]
+name          = "arknet-treasury"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "Treasury accounting for arknet (protocol fund, burn sink, grants)."
+
+[dependencies]
+arknet-common = { workspace = true }
+arknet-chain  = { workspace = true }
+thiserror     = { workspace = true }

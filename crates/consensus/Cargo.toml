@@ -1,0 +1,15 @@
+[package]
+name          = "arknet-consensus"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "L1 consensus engine for arknet (Tendermint BFT via malachite)."
+
+[dependencies]
+arknet-common  = { workspace = true }
+arknet-crypto  = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+thiserror      = { workspace = true }

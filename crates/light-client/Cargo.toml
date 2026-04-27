@@ -1,0 +1,13 @@
+[package]
+name          = "arknet-light-client"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "WASM-embeddable light client for arknet (IBC-compatible)."
+
+[dependencies]
+arknet-common = { workspace = true }
+arknet-crypto = { workspace = true }
+thiserror     = { workspace = true }

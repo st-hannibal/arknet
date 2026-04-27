@@ -1,0 +1,16 @@
+[package]
+name          = "arknet-network"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "P2P networking layer for arknet: libp2p transport, gossip, DHT, encrypted channels."
+
+[dependencies]
+arknet-common  = { workspace = true }
+arknet-crypto  = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+thiserror      = { workspace = true }
+# libp2p is added when Phase 1 begins (Week ~17); omitted here to keep the scaffold lean.

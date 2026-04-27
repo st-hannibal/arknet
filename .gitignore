@@ -1,0 +1,68 @@
+# Rust
+/target/
+**/target/
+**/*.rs.bk
+Cargo.lock
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Node data
+data/
+.arknet/
+node.toml.local
+*.key
+*.pem
+mnemonic.txt
+operator.json
+
+# Secrets
+.env
+.env.*
+!.env.example
+secrets/
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+
+# Logs
+*.log
+logs/
+
+# Coverage
+/coverage/
+lcov.info
+*.profraw
+
+# Python
+__pycache__/
+*.py[oc]
+*.pyc
+.venv/
+build/
+dist/
+wheels/
+*.egg-info
+
+# Node (for TS bindings dev)
+node_modules/
+.pnpm-store/
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# ─── PRIVATE: never commit (decision 2026-04-27) ─────────────────────────
+# See MEMORY / docs/PROGRESS for context. These files stay local-only and
+# are not backed up via git. Re-evaluate at Phase 4 before going public.
+CLAUDE.md
+/docs/

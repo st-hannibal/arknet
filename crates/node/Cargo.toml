@@ -1,0 +1,40 @@
+[package]
+name          = "arknet-node"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "The unified arknet binary. Role scheduler, config loader, hardware manager."
+
+[[bin]]
+name = "arknet"
+path = "src/main.rs"
+
+[dependencies]
+arknet-common        = { workspace = true }
+arknet-crypto        = { workspace = true }
+arknet-network       = { workspace = true }
+arknet-consensus     = { workspace = true }
+arknet-chain         = { workspace = true }
+arknet-staking       = { workspace = true }
+arknet-governance    = { workspace = true }
+arknet-treasury      = { workspace = true }
+arknet-model-manager = { workspace = true }
+arknet-inference     = { workspace = true }
+arknet-router        = { workspace = true }
+arknet-compute       = { workspace = true }
+arknet-verifier      = { workspace = true }
+arknet-validator     = { workspace = true }
+arknet-receipts      = { workspace = true }
+arknet-payments      = { workspace = true }
+arknet-rpc           = { workspace = true }
+
+clap                 = { workspace = true }
+tokio                = { workspace = true }
+figment              = { workspace = true }
+serde                = { workspace = true }
+tracing              = { workspace = true }
+tracing-subscriber   = { workspace = true }
+anyhow               = { workspace = true }
+thiserror            = { workspace = true }

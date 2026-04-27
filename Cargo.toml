@@ -1,0 +1,141 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/common",
+    "crates/crypto",
+    "crates/network",
+    "crates/consensus",
+    "crates/chain",
+    "crates/staking",
+    "crates/governance",
+    "crates/treasury",
+    "crates/model-manager",
+    "crates/inference",
+    "crates/router",
+    "crates/compute",
+    "crates/verifier",
+    "crates/validator",
+    "crates/receipts",
+    "crates/payments",
+    "crates/rpc",
+    "crates/node",
+    "crates/light-client",
+    "crates/sdk-rust",
+    "crates/cli",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.86"
+authors      = ["arknet Labs"]
+license      = "Apache-2.0"
+repository   = "https://github.com/arknet-labs/arknet"
+homepage     = "https://arknet.ai"
+documentation = "https://docs.arknet.ai"
+
+[workspace.dependencies]
+# Internal crates
+arknet-common        = { path = "crates/common",        version = "0.1.0" }
+arknet-crypto        = { path = "crates/crypto",        version = "0.1.0" }
+arknet-network       = { path = "crates/network",       version = "0.1.0" }
+arknet-consensus     = { path = "crates/consensus",     version = "0.1.0" }
+arknet-chain         = { path = "crates/chain",         version = "0.1.0" }
+arknet-staking       = { path = "crates/staking",       version = "0.1.0" }
+arknet-governance    = { path = "crates/governance",    version = "0.1.0" }
+arknet-treasury      = { path = "crates/treasury",      version = "0.1.0" }
+arknet-model-manager = { path = "crates/model-manager", version = "0.1.0" }
+arknet-inference     = { path = "crates/inference",     version = "0.1.0" }
+arknet-router        = { path = "crates/router",        version = "0.1.0" }
+arknet-compute       = { path = "crates/compute",       version = "0.1.0" }
+arknet-verifier      = { path = "crates/verifier",      version = "0.1.0" }
+arknet-validator     = { path = "crates/validator",     version = "0.1.0" }
+arknet-receipts      = { path = "crates/receipts",      version = "0.1.0" }
+arknet-payments      = { path = "crates/payments",      version = "0.1.0" }
+arknet-rpc           = { path = "crates/rpc",           version = "0.1.0" }
+arknet-light-client  = { path = "crates/light-client",  version = "0.1.0" }
+arknet-sdk           = { path = "crates/sdk-rust",      version = "0.1.0" }
+
+# Async runtime
+tokio       = { version = "1.38", features = ["full"] }
+tokio-util  = { version = "0.7", features = ["full"] }
+futures     = "0.3"
+async-trait = "0.1"
+
+# Serialization
+borsh        = { version = "1.5", features = ["derive"] }
+serde        = { version = "1.0", features = ["derive"] }
+serde_json   = "1.0"
+toml         = "0.8"
+
+# Config
+figment      = { version = "0.10", features = ["toml", "env"] }
+
+# Error handling / logging
+thiserror    = "1.0"
+anyhow       = "1.0"
+tracing      = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Metrics
+prometheus   = "0.13"
+metrics      = "0.23"
+
+# CLI
+clap         = { version = "4.5", features = ["derive", "env"] }
+
+# Cryptography (pinned)
+sha2                 = "=0.10.8"
+blake3               = "=1.5.4"
+ed25519-dalek        = { version = "=2.1.1", features = ["rand_core", "batch"] }
+x25519-dalek         = { version = "=2.0.1", features = ["static_secrets"] }
+aes-gcm              = "=0.10.3"
+chacha20poly1305     = "=0.10.1"
+rand                 = "=0.8.5"
+rand_core            = "=0.6.4"
+subtle               = "=2.5.0"
+zeroize              = { version = "=1.7.0", features = ["derive"] }
+argon2               = { version = "=0.5.3", features = ["std"] }
+
+# Storage
+rocksdb      = { version = "0.22", default-features = false, features = ["snappy"] }
+sled         = "0.34"
+
+# HTTP / RPC
+axum         = "0.7"
+tower        = "0.4"
+tower-http   = { version = "0.5", features = ["cors", "trace"] }
+tonic        = "0.12"
+prost        = "0.13"
+reqwest      = { version = "0.12", features = ["stream", "rustls-tls"] }
+
+# P2P
+libp2p       = { version = "0.54", features = ["tcp", "quic", "noise", "yamux", "gossipsub", "kad", "identify", "ping", "request-response", "tokio", "macros"] }
+
+# Testing
+proptest     = "1.5"
+criterion    = { version = "0.5", features = ["async_tokio"] }
+mockall      = "0.13"
+
+# Utility
+hex          = "0.4"
+bs58         = "0.5"
+bytes        = "1.7"
+parking_lot  = "0.12"
+dashmap      = "6.1"
+
+[profile.release]
+opt-level       = 3
+lto             = "thin"
+codegen-units   = 1
+strip           = "symbols"
+panic           = "abort"
+overflow-checks = true
+
+[profile.dev]
+opt-level       = 0
+debug           = true
+
+[profile.test]
+opt-level       = 1
+debug           = true

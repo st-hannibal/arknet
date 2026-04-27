@@ -1,0 +1,18 @@
+[package]
+name          = "arknet-model-manager"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "Model manager: registry client, hash-verified download, sandbox, local cache."
+
+[dependencies]
+arknet-common  = { workspace = true }
+arknet-crypto  = { workspace = true }
+tokio          = { workspace = true }
+reqwest        = { workspace = true }
+sha2           = { workspace = true }
+thiserror      = { workspace = true }
+tracing        = { workspace = true }
+serde          = { workspace = true }

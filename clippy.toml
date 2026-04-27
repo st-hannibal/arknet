@@ -1,0 +1,6 @@
+avoid-breaking-exported-api = false
+msrv = "1.86"
+disallowed-methods = [
+    { path = "std::sync::Mutex::lock", reason = "prefer parking_lot::Mutex or tokio::sync::Mutex" },
+    { path = "std::panic::panic_any", reason = "never panic in protocol code" },
+]

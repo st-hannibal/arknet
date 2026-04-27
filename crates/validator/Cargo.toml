@@ -1,0 +1,19 @@
+[package]
+name          = "arknet-validator"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "L1 validator role: block proposal, precommit, finalization."
+
+[dependencies]
+arknet-common     = { workspace = true }
+arknet-crypto     = { workspace = true }
+arknet-network    = { workspace = true }
+arknet-consensus  = { workspace = true }
+arknet-chain      = { workspace = true }
+arknet-staking    = { workspace = true }
+tokio             = { workspace = true }
+thiserror         = { workspace = true }
+tracing           = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name          = "arknet-staking"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "Stake deposit, delegation, unbonding, and slashing for arknet."
+
+[dependencies]
+arknet-common  = { workspace = true }
+arknet-chain   = { workspace = true }
+arknet-crypto  = { workspace = true }
+thiserror      = { workspace = true }
+tracing        = { workspace = true }

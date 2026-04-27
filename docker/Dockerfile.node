@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1.7
+
+# ─── Builder stage ──────────────────────────────────────────────────────────
+FROM rust:1.82-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake pkg-config libssl-dev clang git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY . .
+
+RUN cargo build --release --bin arknet
+
+# ─── Runtime stage ──────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --shell /bin/bash arknet
+
+COPY --from=builder /build/target/release/arknet /usr/local/bin/arknet
+
+USER arknet
+WORKDIR /home/arknet
+ENV ARKNET_DATA_DIR=/var/lib/arknet
+
+EXPOSE 26656 26657 9090 8080
+
+ENTRYPOINT ["/usr/local/bin/arknet"]
+CMD ["start"]
