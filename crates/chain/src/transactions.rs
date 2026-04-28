@@ -1,0 +1,420 @@
+//! On-chain transaction types and signed wire format.
+//!
+//! Authoritative shape: [`docs/PROTOCOL_SPEC.md`](../../../docs/PROTOCOL_SPEC.md)
+//! §11 (lifecycle), §9.3 (stake ops), §13 (governance). Phase 1 Week 1-2
+//! lands the types + borsh forms + hash; state application logic lands in
+//! Week 3-4.
+
+use borsh::{BorshDeserialize, BorshSerialize};
+use serde::{Deserialize, Serialize};
+
+use arknet_common::types::{
+    Address, Amount, Gas, Hash256, Height, NodeId, Nonce, PoolId, PubKey, Signature, Timestamp,
+    TxHash, DOMAIN_TX,
+};
+use arknet_crypto::hash::blake3;
+
+use crate::errors::{ChainError, Result};
+use crate::receipt::ReceiptBatch;
+
+/// Role selector for a stake operation.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+)]
+#[borsh(use_discriminant = true)]
+#[repr(u8)]
+pub enum StakeRole {
+    /// L1 consensus validator.
+    Validator = 0x01,
+    /// L2 request router.
+    Router = 0x02,
+    /// L2 output verifier.
+    Verifier = 0x03,
+    /// L2 inference compute node.
+    Compute = 0x04,
+}
+
+/// All stake lifecycle operations. Mirrors PROTOCOL_SPEC §9.3.
+#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub enum StakeOp {
+    /// Lock stake for a role (optionally tied to a pool; delegator optional).
+    Deposit {
+        /// Target node.
+        node_id: NodeId,
+        /// Role being staked for.
+        role: StakeRole,
+        /// Optional pool this stake is pinned to.
+        pool_id: Option<PoolId>,
+        /// Amount in ark_atom.
+        amount: Amount,
+        /// If set, this stake is a delegation from another address.
+        delegator: Option<Address>,
+    },
+    /// Begin withdrawal (starts unbonding period).
+    Withdraw {
+        /// Node being unstaked from.
+        node_id: NodeId,
+        /// Role.
+        role: StakeRole,
+        /// Pool (if the stake was pool-pinned).
+        pool_id: Option<PoolId>,
+        /// Amount to withdraw.
+        amount: Amount,
+    },
+    /// Finalize a completed unbonding after the 14-day period.
+    Complete {
+        /// Node being finalized on.
+        node_id: NodeId,
+        /// Role.
+        role: StakeRole,
+        /// Pool (if any).
+        pool_id: Option<PoolId>,
+        /// Opaque unbonding-id returned by `Withdraw`.
+        unbond_id: u64,
+    },
+    /// Move stake between nodes (1-day cooldown enforced by state layer).
+    Redelegate {
+        /// Source node.
+        from: NodeId,
+        /// Destination node.
+        to: NodeId,
+        /// Role.
+        role: StakeRole,
+        /// Amount.
+        amount: Amount,
+    },
+}
+
+/// Voting options on a governance proposal.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+)]
+#[borsh(use_discriminant = true)]
+#[repr(u8)]
+pub enum VoteChoice {
+    /// In favor.
+    Yes = 0x01,
+    /// Against.
+    No = 0x02,
+    /// Abstain (counts toward quorum, not toward yes/no).
+    Abstain = 0x03,
+    /// No-with-veto (burns the proposal deposit if threshold met).
+    NoWithVeto = 0x04,
+}
+
+/// Governance proposal body. See PROTOCOL_SPEC §13.
+#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub struct Proposal {
+    /// Unique proposal identifier (allocated by state at submission).
+    pub proposal_id: u64,
+    /// Proposer address.
+    pub proposer: Address,
+    /// Deposit (10,000 ARK by genesis constant).
+    pub deposit: Amount,
+    /// Human-readable title.
+    pub title: String,
+    /// Markdown body (capped by size bound on the tx).
+    pub body: String,
+    /// Timestamp when discussion phase ends (`start + 7d`).
+    pub discussion_ends: Timestamp,
+    /// Timestamp when voting phase ends (`discussion_ends + 7d`).
+    pub voting_ends: Timestamp,
+    /// Optional hard-fork activation height.
+    pub activation: Option<Height>,
+}
+
+/// On-chain model manifest carried by a `RegisterModel` transaction.
+///
+/// This is a minimal copy of the registry manifest (see `arknet-model-manager`)
+/// so the chain crate stays free of model-manager deps.
+#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub struct OnChainModelManifest {
+    /// Canonical model identifier, e.g. `"meta-llama/Llama-3-8B-Instruct"`.
+    pub model_id: String,
+    /// SHA-256 digest of the GGUF artifact.
+    pub sha256: Hash256,
+    /// Expected byte size of the artifact.
+    pub size_bytes: u64,
+    /// Mirrors — free-form URLs; verified against `sha256` by pullers.
+    pub mirrors: Vec<String>,
+    /// License identifier (SPDX short form).
+    pub license: String,
+}
+
+/// Top-level transaction enum.
+///
+/// All variants are consensus-relevant. Application logic is implemented
+/// in Phase 1 Week 3-4 (`chain/apply.rs`). Ordering of variants is stable
+/// because `borsh` tags them by position.
+#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub enum Transaction {
+    /// Transfer ARK between accounts.
+    Transfer {
+        /// Sender.
+        from: Address,
+        /// Recipient.
+        to: Address,
+        /// Amount (ark_atom).
+        amount: Amount,
+        /// Sender nonce.
+        nonce: Nonce,
+        /// Gas budget (priced via fee market + EIP-1559 base fee).
+        fee: Gas,
+    },
+    /// Any staking lifecycle operation.
+    StakeOp(StakeOp),
+    /// Anchor a verified L2 receipt batch onto L1.
+    ReceiptBatch(ReceiptBatch),
+    /// Register a new model in the on-chain registry.
+    RegisterModel {
+        /// Manifest body.
+        manifest: OnChainModelManifest,
+        /// Address performing the registration (pays the deposit).
+        registrar: Address,
+        /// Deposit (10K ARK by genesis constant).
+        deposit: Amount,
+    },
+    /// Submit a governance proposal.
+    GovProposal(Proposal),
+    /// Cast a vote on an active proposal.
+    GovVote {
+        /// Proposal under vote.
+        proposal_id: u64,
+        /// Voter address (must have stake or delegation weight).
+        voter: Address,
+        /// Choice.
+        choice: VoteChoice,
+    },
+}
+
+impl Transaction {
+    /// Domain-separated transaction hash. Pattern:
+    /// `blake3(DOMAIN_TX || borsh(tx))`.
+    pub fn hash(&self) -> TxHash {
+        let body = borsh::to_vec(self).expect("transaction borsh encoding is infallible");
+        let mut buf = Vec::with_capacity(DOMAIN_TX.len() + body.len());
+        buf.extend_from_slice(DOMAIN_TX);
+        buf.extend_from_slice(&body);
+        TxHash::new(*blake3(&buf).as_bytes())
+    }
+
+    /// Total borsh-encoded size in bytes.
+    pub fn encoded_len(&self) -> usize {
+        borsh::to_vec(self)
+            .map(|v| v.len())
+            .expect("transaction borsh encoding is infallible")
+    }
+}
+
+/// Signed wire-format transaction.
+///
+/// Signature covers the *transaction hash*, not the raw bytes — hashing
+/// domain-separates from block signatures and lets light clients verify
+/// without re-encoding.
+#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub struct SignedTransaction {
+    /// The transaction body.
+    pub tx: Transaction,
+    /// Signer's scheme-tagged public key.
+    pub signer: PubKey,
+    /// Signature over `tx.hash()`.
+    pub signature: Signature,
+}
+
+impl SignedTransaction {
+    /// Hash of the inner transaction. Matches `self.tx.hash()`.
+    pub fn hash(&self) -> TxHash {
+        self.tx.hash()
+    }
+
+    /// Borsh-encoded size of the full signed wire record.
+    pub fn encoded_len(&self) -> usize {
+        borsh::to_vec(self)
+            .map(|v| v.len())
+            .expect("signed tx borsh encoding is infallible")
+    }
+}
+
+/// Hard size cap on any single signed transaction (1 MiB). Rejected
+/// before consensus so malicious peers cannot DOS mempools with jumbo
+/// txs.
+pub const MAX_SIGNED_TX_BYTES: usize = 1024 * 1024;
+
+/// Validate size bound on a signed transaction. Returns `ChainError::Oversize`
+/// on failure.
+pub fn check_signed_tx_size(stx: &SignedTransaction) -> Result<()> {
+    let len = stx.encoded_len();
+    if len > MAX_SIGNED_TX_BYTES {
+        return Err(ChainError::Oversize {
+            what: "signed transaction",
+            actual: len,
+            max: MAX_SIGNED_TX_BYTES,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arknet_common::types::{SignatureScheme, ATOMS_PER_ARK};
+
+    fn sample_signer() -> (PubKey, Signature) {
+        (
+            PubKey::ed25519([0x11; 32]),
+            Signature::new(SignatureScheme::Ed25519, vec![0x22; 64]).unwrap(),
+        )
+    }
+
+    fn sample_transfer() -> Transaction {
+        Transaction::Transfer {
+            from: Address::new([0xaa; 20]),
+            to: Address::new([0xbb; 20]),
+            amount: 5 * ATOMS_PER_ARK,
+            nonce: 1,
+            fee: 21_000,
+        }
+    }
+
+    #[test]
+    fn transfer_borsh_roundtrip() {
+        let tx = sample_transfer();
+        let bytes = borsh::to_vec(&tx).unwrap();
+        let decoded: Transaction = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn stake_op_borsh_roundtrip() {
+        let op = StakeOp::Deposit {
+            node_id: NodeId::new([1; 32]),
+            role: StakeRole::Compute,
+            pool_id: Some(PoolId::new([2; 16])),
+            amount: 2_500 * ATOMS_PER_ARK,
+            delegator: None,
+        };
+        let tx = Transaction::StakeOp(op.clone());
+        let bytes = borsh::to_vec(&tx).unwrap();
+        let decoded: Transaction = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn gov_proposal_borsh_roundtrip() {
+        let prop = Proposal {
+            proposal_id: 42,
+            proposer: Address::new([0xcc; 20]),
+            deposit: 10_000 * ATOMS_PER_ARK,
+            title: "Raise base fee target to 60%".to_string(),
+            body: "see forum thread".to_string(),
+            discussion_ends: 1_700_000_000_000,
+            voting_ends: 1_700_604_800_000,
+            activation: None,
+        };
+        let tx = Transaction::GovProposal(prop);
+        let bytes = borsh::to_vec(&tx).unwrap();
+        let decoded: Transaction = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn gov_vote_borsh_roundtrip() {
+        let tx = Transaction::GovVote {
+            proposal_id: 42,
+            voter: Address::new([0xdd; 20]),
+            choice: VoteChoice::Yes,
+        };
+        let bytes = borsh::to_vec(&tx).unwrap();
+        let decoded: Transaction = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn transaction_hash_is_deterministic() {
+        let tx = sample_transfer();
+        let h1 = tx.hash();
+        let h2 = tx.hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn transaction_hash_differs_with_content() {
+        let a = sample_transfer();
+        let b = Transaction::Transfer {
+            from: Address::new([0xaa; 20]),
+            to: Address::new([0xbb; 20]),
+            amount: 6 * ATOMS_PER_ARK, // different amount
+            nonce: 1,
+            fee: 21_000,
+        };
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn signed_tx_roundtrip() {
+        let tx = sample_transfer();
+        let (signer, signature) = sample_signer();
+        let stx = SignedTransaction {
+            tx,
+            signer,
+            signature,
+        };
+        let bytes = borsh::to_vec(&stx).unwrap();
+        let decoded: SignedTransaction = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(stx, decoded);
+        assert_eq!(stx.hash(), decoded.hash());
+    }
+
+    #[test]
+    fn signed_tx_size_check_accepts_normal() {
+        let tx = sample_transfer();
+        let (signer, signature) = sample_signer();
+        let stx = SignedTransaction {
+            tx,
+            signer,
+            signature,
+        };
+        assert!(check_signed_tx_size(&stx).is_ok());
+    }
+
+    #[test]
+    fn signed_tx_size_check_rejects_oversize() {
+        // Synthesize an oversize tx by stuffing the proposal body.
+        let prop = Proposal {
+            proposal_id: 0,
+            proposer: Address::default(),
+            deposit: 0,
+            title: "x".to_string(),
+            body: "x".repeat(MAX_SIGNED_TX_BYTES + 1),
+            discussion_ends: 0,
+            voting_ends: 0,
+            activation: None,
+        };
+        let (signer, signature) = sample_signer();
+        let stx = SignedTransaction {
+            tx: Transaction::GovProposal(prop),
+            signer,
+            signature,
+        };
+        let err = check_signed_tx_size(&stx).unwrap_err();
+        assert!(matches!(err, ChainError::Oversize { .. }));
+    }
+}
