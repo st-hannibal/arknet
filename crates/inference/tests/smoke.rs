@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use arknet_inference::{InferenceMode, Model, ModelLoadParams};
 
 fn fixture_path() -> Option<PathBuf> {
-    let p = std::env::var("ARKNET_TEST_STORIES260K")
+    let p = std::env::var("STORIES260K_FIXTURE_PATH")
         .ok()
         .map(PathBuf::from)
         .or_else(|| {

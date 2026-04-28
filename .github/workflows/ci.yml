@@ -71,15 +71,17 @@ jobs:
       # the tests hit the already-present-file branch.
       - name: Fetch test fixtures (posix)
         if: runner.os != 'Windows'
+        id: fixture_posix
         shell: bash
         run: |
           mkdir -p "${RUNNER_TEMP}/arknet-test-fixtures"
           curl -sSL --fail \
             -o "${RUNNER_TEMP}/arknet-test-fixtures/stories260K.gguf" \
             https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf
-          echo "ARKNET_TEST_STORIES260K=${RUNNER_TEMP}/arknet-test-fixtures/stories260K.gguf" >> "${GITHUB_ENV}"
+          echo "path=${RUNNER_TEMP}/arknet-test-fixtures/stories260K.gguf" >> "${GITHUB_OUTPUT}"
       - name: Fetch test fixtures (windows)
         if: runner.os == 'Windows'
+        id: fixture_windows
         shell: pwsh
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'arknet-test-fixtures'
@@ -88,8 +90,14 @@ jobs:
           Invoke-WebRequest `
             -Uri 'https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf' `
             -OutFile $dest
-          "ARKNET_TEST_STORIES260K=$dest" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "path=$dest" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      # `STORIES260K_FIXTURE_PATH` is deliberately NOT `ARKNET_*`-prefixed:
+      # the common crate's figment loader reads every `ARKNET_*` env var
+      # with `deny_unknown_fields`, so test-scoped env vars under that
+      # prefix would break `NodeConfig::load` mid-test.
       - name: Test
+        env:
+          STORIES260K_FIXTURE_PATH: ${{ steps.fixture_posix.outputs.path || steps.fixture_windows.outputs.path }}
         run: cargo test --workspace --all-features
 
   audit:

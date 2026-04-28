@@ -23,7 +23,7 @@ use arknet_crypto::hash::sha256;
 const STORIES260K_SHA256: &str = "270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d";
 
 fn fixture_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("ARKNET_TEST_STORIES260K") {
+    if let Ok(p) = std::env::var("STORIES260K_FIXTURE_PATH") {
         let p = PathBuf::from(p);
         return p.exists().then_some(p);
     }
