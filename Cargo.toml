@@ -28,11 +28,11 @@ members = [
 version      = "0.1.0"
 edition      = "2021"
 rust-version = "1.86"
-authors      = ["arknet Labs"]
+authors      = ["arknet contributors"]
 license      = "Apache-2.0"
-repository   = "https://github.com/arknet-labs/arknet"
-homepage     = "https://arknet.ai"
-documentation = "https://docs.arknet.ai"
+repository   = "https://github.com/st-hannibal/arknet"
+homepage     = "https://arknet.arkengel.com"
+documentation = "https://arknet.arkengel.com/docs"
 
 [workspace.dependencies]
 # Internal crates
