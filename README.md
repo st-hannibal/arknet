@@ -101,15 +101,15 @@ Full design in [TOKENOMICS.md](docs/TOKENOMICS.md).
 
 ## Status
 
-arknet is in **pre-alpha** (pre-Phase-0). This repository contains the authoritative specification and the initial Rust workspace scaffold.
+arknet is in **pre-alpha**, developed under a **fair-launch** model: no premine, no investor round, no team allocation, no airdrop. The repository stays private through Phases 0-3 and flips public at Phase 4 (genesis mainnet), at which point the code, genesis config, and signed binaries all go live together.
 
-| Phase   | Target       | Status                                 |
-|---------|--------------|----------------------------------------|
-| Phase 0 | Single node  | 🚧 Weeks 1-6 complete (common + crypto crates, 99 tests passing) |
-| Phase 1 | Devnet       | pending                                |
-| Phase 2 | Testnet      | pending                                |
-| Phase 3 | Beta mainnet | pending                                |
-| Phase 4 | Genesis      | pending                                |
+| Phase   | Target               | Status                                                                   |
+|---------|----------------------|--------------------------------------------------------------------------|
+| Phase 0 | Local single node    | ✅ **Complete** (v0.1.0, 2026-04-28) — 171 tests, determinism proven     |
+| Phase 1 | Devnet (4-5 nodes)   | next                                                                     |
+| Phase 2 | Solo testnet         | pending                                                                  |
+| Phase 3 | Closed beta          | pending                                                                  |
+| Phase 4 | Genesis + public     | pending                                                                  |
 
 See the [Rollout Plan](docs/ROLLOUT_PLAN.md), [Checklist](docs/CHECKLIST.md), and [Progress log](docs/PROGRESS.md).
 

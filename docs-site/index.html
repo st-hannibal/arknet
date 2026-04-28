@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>arknet — decentralized AI inference</title>
-<meta name="description" content="Permissionless, censorship-resistant, globally distributed AI inference. One binary. Any combination of roles. OpenAI-compatible API.">
+<meta name="description" content="Fair-launch decentralized AI inference protocol. No premine. No investor round. One binary. OpenAI-compatible API.">
+<meta property="og:title" content="arknet">
+<meta property="og:description" content="Fair-launch decentralized AI inference protocol. Mainnet ships at Phase 4.">
 <style>
   :root {
     --bg: #0b0d10;
@@ -38,7 +40,8 @@
     overflow-x: auto;
   }
   ul { padding-left: 20px; }
-  li { margin: 6px 0; }
+  li { margin: 6px 0; color: var(--muted); }
+  li strong { color: var(--fg); }
   .badge {
     display: inline-block;
     padding: 2px 10px;
@@ -48,6 +51,16 @@
     color: var(--muted);
     margin-bottom: 24px;
   }
+  .promise {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 28px 0;
+  }
+  .promise p { margin: 6px 0; }
+  .promise strong { color: var(--accent); }
   footer {
     margin-top: 80px;
     padding-top: 24px;
@@ -59,31 +72,47 @@
 </head>
 <body>
 <main>
-  <span class="badge">Phase 0 · pre-alpha</span>
+  <span class="badge">Pre-alpha · Phase 0 complete · mainnet pending</span>
   <h1>arknet</h1>
-  <p class="lead">Decentralized AI inference protocol. Permissionless, censorship-resistant, globally distributed. One binary. OpenAI-compatible API.</p>
+  <p class="lead">A fair-launch protocol for decentralized AI inference. Permissionless, censorship-resistant, globally distributed. One binary. OpenAI-compatible API.</p>
 
-  <h2>Quick links</h2>
+  <div class="promise">
+    <p><strong>Fair launch — no premine, no investor round, no team allocation, no airdrop.</strong></p>
+    <p>Every ARK in circulation will be minted post-genesis against verified inference work. The maintainer holds zero tokens at launch. Source code, genesis config, and signed binaries will publish simultaneously on mainnet day.</p>
+  </div>
+
+  <h2>What is arknet?</h2>
+  <p>A decentralized network where anyone can run a compute node and earn ARK for serving verifiable AI output, and any user can submit OpenAI-compatible inference requests and get a complete response or a full refund. The protocol is trust-minimized: no single entity can censor, seize funds, or fake work.</p>
+
+  <h2>Roadmap</h2>
   <ul>
-    <li><a href="https://github.com/st-hannibal/arknet">GitHub repository</a></li>
-    <li><a href="https://github.com/st-hannibal/arknet/tree/main/docs">Documentation</a></li>
-    <li><a href="https://github.com/st-hannibal/arknet/discussions">Discussions &amp; governance</a></li>
-    <li><a href="https://github.com/st-hannibal/arknet/security/advisories">Security advisories</a></li>
+    <li><strong>Phase 0 — Local single node</strong> · shipped v0.1.0 · 171 tests passing · determinism proven</li>
+    <li><strong>Phase 1 — Devnet</strong> · 4-5 validators, full L1+L2 stack · next</li>
+    <li><strong>Phase 2 — Solo testnet</strong> · payment channels, encrypted mempool, 90-day uptime</li>
+    <li><strong>Phase 3 — Closed beta</strong> · real emission, security audit, launch preparation</li>
+    <li><strong>Phase 4 — Genesis mainnet</strong> · source code goes public, first block mines, anyone can join</li>
   </ul>
 
-  <h2>Run a node (when testnet is live)</h2>
-  <p>The one-liner installs a prebuilt <code>arknet</code> binary from GitHub Releases. Until Phase 1 ships a signed release, build from source.</p>
-  <pre>curl -fsSL https://arknet.arkengel.com/install.sh | sh</pre>
+  <h2>At genesis (Phase 4)</h2>
+  <p>On launch day this site serves docs, the operator guide, the genesis config, and a one-line installer. Until then, there is nothing to run — the protocol is under solo development. Starring or following the repository is not possible during the private phase.</p>
 
-  <h2>Build from source (Phase 0)</h2>
-  <pre>git clone --recursive https://github.com/st-hannibal/arknet.git
-cd arknet
-cargo build --release
-./target/release/arknet --help</pre>
+  <pre># Available at genesis, not before
+curl -fsSL https://arknet.arkengel.com/install.sh | sh
+arknet init --network mainnet
+arknet start</pre>
+
+  <h2>Design principles</h2>
+  <ul>
+    <li><strong>Hash-only model integrity</strong> — the protocol doesn't care where a model came from, only its SHA-256.</li>
+    <li><strong>Verifiable computation</strong> — deterministic re-execution or TEE attestation; no trust assumptions on compute nodes.</li>
+    <li><strong>Zero-trust between all participants</strong> — users, routers, compute nodes, verifiers, validators are all adversarial in the threat model.</li>
+    <li><strong>Community-operated infrastructure</strong> — no founder-run gateways, seeds, forums, or support email. Everything lives on-chain or on free GitHub infrastructure.</li>
+    <li><strong>OpenAI API compatibility</strong> — decentralization is invisible to the end user. Any OpenAI client works by changing <code>base_url</code>.</li>
+  </ul>
 
   <footer>
     <p>Apache-2.0 · no warranty · pre-release software.<br>
-    The protocol is designed to be community-operated. This site is a static landing page; no service runs behind it.</p>
+    This is a static landing page; no service runs behind it.</p>
   </footer>
 </main>
 </body>
