@@ -10,6 +10,34 @@ description   = "L1 consensus engine for arknet (Tendermint BFT via malachite)."
 [dependencies]
 arknet-common  = { workspace = true }
 arknet-crypto  = { workspace = true }
+arknet-chain   = { workspace = true }
+arknet-network = { workspace = true }
+
 tokio          = { workspace = true }
+tokio-util     = { workspace = true }
+futures        = { workspace = true }
+async-trait    = { workspace = true }
+
+borsh          = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+hex            = { workspace = true }
+parking_lot    = { workspace = true }
+
 tracing        = { workspace = true }
 thiserror      = { workspace = true }
+
+# Malachite BFT — raw consensus core + driver only, no engine/network.
+# We bridge to our own `arknet-network` libp2p stack explicitly so this
+# crate does not drag in a conflicting libp2p version transitively.
+# See docs/PROGRESS 2026-04-28 Week 7-8 for the dep-spike rationale.
+informalsystems-malachitebft-core-consensus = "0.5.0"
+informalsystems-malachitebft-core-driver    = "0.5.0"
+informalsystems-malachitebft-core-types     = { version = "0.5.0", features = ["borsh", "serde"] }
+informalsystems-malachitebft-core-votekeeper = "0.5.0"
+informalsystems-malachitebft-signing-ed25519 = "0.5.0"
+
+[dev-dependencies]
+tempfile       = "3.10"
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tracing-subscriber = { workspace = true }
