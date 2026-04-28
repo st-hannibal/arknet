@@ -61,7 +61,7 @@ sysinfo              = "0.33"
 dirs                 = "5.0"
 
 # HTTP client for `arknet status` / `arknet health` commands
-reqwest              = { workspace = true }
+reqwest              = { workspace = true, features = ["json"] }
 
 # Encoding helpers used by model-cmd (digest hex parse/print, URL parse)
 hex                  = { workspace = true }

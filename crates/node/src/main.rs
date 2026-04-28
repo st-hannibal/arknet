@@ -12,6 +12,7 @@ mod hardware;
 mod logging;
 mod metrics;
 mod paths;
+mod rpc;
 mod runtime;
 mod scheduler;
 

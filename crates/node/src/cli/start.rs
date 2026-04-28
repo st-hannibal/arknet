@@ -13,6 +13,7 @@ use crate::errors::{NodeError, Result};
 use crate::hardware::HardwareReport;
 use crate::metrics;
 use crate::paths;
+use crate::rpc;
 use crate::runtime::{shutdown, NodeRuntime};
 use crate::scheduler::{self, Role};
 
@@ -58,13 +59,30 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
         tokio::spawn(async move { metrics::serve(bind, registry, token_for_metrics).await })
     };
 
-    // Drive the role. When it exits, request shutdown so the metrics
-    // server comes down with it.
+    // Launch the Phase-0 HTTP RPC endpoint on the same shutdown token.
+    // Minimal surface: /health, /v1/models, /v1/models/load,
+    // /v1/inference (SSE stream).
+    let rpc_handle = {
+        let bind: std::net::SocketAddr = cfg
+            .network
+            .rpc_listen
+            .parse()
+            .map_err(|e| NodeError::Config(format!("rpc_listen: {e}")))?;
+        let state = rpc::RpcState::new(rt.clone());
+        let token_for_rpc = token.clone();
+        tokio::spawn(async move { rpc::serve(bind, state, token_for_rpc).await })
+    };
+
+    // Drive the role. When it exits, request shutdown so the servers
+    // come down with it.
     let role_result = scheduler::run(role, rt, token.clone()).await;
     token.cancel();
 
     if let Err(e) = metrics_handle.await? {
         error!(error = %e, "metrics server errored on shutdown");
+    }
+    if let Err(e) = rpc_handle.await? {
+        error!(error = %e, "rpc server errored on shutdown");
     }
 
     role_result
