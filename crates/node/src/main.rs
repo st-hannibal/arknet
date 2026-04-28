@@ -13,6 +13,7 @@ mod logging;
 mod metrics;
 mod paths;
 mod runtime;
+mod scheduler;
 
 use clap::Parser;
 
