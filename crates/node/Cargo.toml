@@ -32,9 +32,36 @@ arknet-rpc           = { workspace = true }
 
 clap                 = { workspace = true }
 tokio                = { workspace = true }
+tokio-util           = { workspace = true }
+tokio-stream         = "0.1"
 figment              = { workspace = true }
 serde                = { workspace = true }
+serde_json           = { workspace = true }
+toml                 = { workspace = true }
 tracing              = { workspace = true }
 tracing-subscriber   = { workspace = true }
 anyhow               = { workspace = true }
 thiserror            = { workspace = true }
+futures              = { workspace = true }
+bytes                = { workspace = true }
+
+# Metrics — facade + prometheus backend (D5)
+metrics              = { workspace = true }
+metrics-exporter-prometheus = "0.16"
+
+# HTTP RPC endpoint + /metrics server (D5, D8)
+axum                 = { workspace = true }
+tower-http           = { workspace = true }
+
+# Hardware probe (D6)
+sysinfo              = "0.33"
+
+# Directory resolution — future-proofing even though default is ~/.arknet/
+dirs                 = "5.0"
+
+# HTTP client for `arknet status` / `arknet health` commands
+reqwest              = { workspace = true }
+
+[dev-dependencies]
+tempfile             = "3.10"
+tokio                = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

@@ -143,7 +143,10 @@ fn emit_link_flags(dst: &Path, backend: GpuBackend) {
     let build_ggml_src = dst.join("build").join("ggml").join("src");
     println!("cargo:rustc-link-search=native={}", lib.display());
     println!("cargo:rustc-link-search=native={}", build_src.display());
-    println!("cargo:rustc-link-search=native={}", build_ggml_src.display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        build_ggml_src.display()
+    );
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "windows" {
