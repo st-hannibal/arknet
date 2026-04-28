@@ -8,10 +8,18 @@ repository    = { workspace = true }
 description   = "arknet L1 chain: blocks, state trie, transactions, fee market."
 
 [dependencies]
-arknet-common  = { workspace = true }
-arknet-crypto  = { workspace = true }
-borsh          = { workspace = true }
-serde          = { workspace = true }
-tokio          = { workspace = true }
-tracing        = { workspace = true }
-thiserror      = { workspace = true }
+arknet-common      = { workspace = true }
+arknet-crypto      = { workspace = true }
+borsh              = { workspace = true }
+serde              = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+thiserror          = { workspace = true }
+rocksdb            = { workspace = true }
+parking_lot        = { workspace = true }
+sparse-merkle-tree = { workspace = true }
+toml               = { workspace = true }
+hex                = { workspace = true }
+
+[dev-dependencies]
+tempfile           = "3.10"
