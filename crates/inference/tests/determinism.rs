@@ -6,10 +6,12 @@
 //!
 //! Uses the `stories260K` fixture — a 260K-parameter TinyLlama trained
 //! on TinyStories, pinned at SHA-256 in the test setup. Fixture is
-//! fetched on demand and cached under `/tmp/arknet-test-fixtures/`.
+//! fetched on demand and cached under `<tempdir>/arknet-test-fixtures/`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use arknet_crypto::hash::sha256;
 use arknet_inference::{
@@ -22,13 +24,13 @@ const STORIES260K_URL: &str =
 const STORIES260K_SHA256: &str = "270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d";
 
 fn fixture_dir() -> PathBuf {
-    std::env::var("ARKNET_TEST_FIXTURES_DIR")
+    std::env::var("TEST_FIXTURES_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp/arknet-test-fixtures"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("arknet-test-fixtures"))
 }
 
 fn fixture_path() -> PathBuf {
-    if let Ok(p) = std::env::var("ARKNET_TEST_STORIES260K") {
+    if let Ok(p) = std::env::var("STORIES260K_FIXTURE_PATH") {
         return PathBuf::from(p);
     }
     fixture_dir().join("stories260K.gguf")
@@ -36,12 +38,21 @@ fn fixture_path() -> PathBuf {
 
 /// Return the fixture path, fetching it if necessary. `None` if the
 /// network fetch fails and no cached copy exists — caller skips.
+///
+/// This binary's three tests run in parallel by default; without the
+/// mutex they all hit the `curl -o` path simultaneously on a cold
+/// runner and clobber each other's writes. Windows surfaced the race;
+/// POSIX just got lucky. In CI the `STORIES260K_FIXTURE_PATH` env var
+/// is set by the workflow so the mutex is never actually contended,
+/// but local `cargo test` runs still benefit from it.
 fn ensure_fixture() -> Option<PathBuf> {
+    static FETCH_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = FETCH_LOCK.lock();
+
     let path = fixture_path();
     if verify_fixture(&path) {
         return Some(path);
     }
-    // Try to fetch.
     let _ = std::fs::create_dir_all(fixture_dir());
     let status = std::process::Command::new("curl")
         .args(["-sL", "--fail", "-o", path.to_str()?, STORIES260K_URL])
@@ -97,7 +108,7 @@ fn deterministic_mode_is_byte_identical_across_runs() {
     let Some(path) = ensure_fixture() else {
         eprintln!(
             "stories260K fixture unavailable and could not be fetched; skipping. \
-             Set ARKNET_TEST_STORIES260K to a pre-placed path to force the test."
+             Set STORIES260K_FIXTURE_PATH to a pre-placed path to force the test."
         );
         return;
     };

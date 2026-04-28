@@ -32,9 +32,50 @@ arknet-rpc           = { workspace = true }
 
 clap                 = { workspace = true }
 tokio                = { workspace = true }
+tokio-util           = { workspace = true }
+tokio-stream         = "0.1"
 figment              = { workspace = true }
 serde                = { workspace = true }
+serde_json           = { workspace = true }
+toml                 = { workspace = true }
 tracing              = { workspace = true }
 tracing-subscriber   = { workspace = true }
 anyhow               = { workspace = true }
 thiserror            = { workspace = true }
+futures              = { workspace = true }
+bytes                = { workspace = true }
+parking_lot          = { workspace = true }
+
+# Metrics — facade + prometheus backend (D5)
+metrics              = { workspace = true }
+# We only use the recorder + handle for pull-mode rendering behind our own
+# axum /metrics route; the crate's default features (http-listener,
+# push-gateway) drag in hyper-rustls → rustls → aws-lc-sys, which keep
+# re-introducing security advisories. Disable them.
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
+
+# HTTP RPC endpoint + /metrics server (D5, D8)
+axum                 = { workspace = true }
+tower-http           = { workspace = true }
+
+# Hardware probe (D6)
+sysinfo              = "0.33"
+
+# Directory resolution — future-proofing even though default is ~/.arknet/
+dirs                 = "5.0"
+
+# HTTP client for `arknet status` / `arknet health` commands
+reqwest              = { workspace = true, features = ["json"] }
+
+# Encoding helpers used by model-cmd (digest hex parse/print, URL parse)
+hex                  = { workspace = true }
+url                  = "2.5"
+
+[dev-dependencies]
+tempfile             = "3.10"
+tokio                = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "process"] }
+serde_json           = { workspace = true }
+reqwest              = { workspace = true, features = ["json"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc                 = "0.2"

@@ -44,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,13 +52,52 @@ jobs:
       - name: Install cmake (linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+      # macOS ships with cmake on GitHub runners. Windows ships Chocolatey
+      # and VS 2022; we install cmake via chocolatey to be version-stable.
+      - name: Install cmake (windows)
+        if: runner.os == 'Windows'
+        run: choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+        shell: pwsh
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.86.0
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --workspace --all-targets
+      # Pre-fetch the stories260K test fixture exactly once per runner.
+      # Three parallel inference tests call the same fallback curl path
+      # and race on the download file — deterministic on POSIX (fast
+      # writes hide the race), flaky on Windows. Doing it here makes
+      # the tests hit the already-present-file branch.
+      - name: Fetch test fixtures (posix)
+        if: runner.os != 'Windows'
+        id: fixture_posix
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/arknet-test-fixtures"
+          curl -sSL --fail \
+            -o "${RUNNER_TEMP}/arknet-test-fixtures/stories260K.gguf" \
+            https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf
+          echo "path=${RUNNER_TEMP}/arknet-test-fixtures/stories260K.gguf" >> "${GITHUB_OUTPUT}"
+      - name: Fetch test fixtures (windows)
+        if: runner.os == 'Windows'
+        id: fixture_windows
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'arknet-test-fixtures'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $dest = Join-Path $dir 'stories260K.gguf'
+          Invoke-WebRequest `
+            -Uri 'https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf' `
+            -OutFile $dest
+          "path=$dest" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      # `STORIES260K_FIXTURE_PATH` is deliberately NOT `ARKNET_*`-prefixed:
+      # the common crate's figment loader reads every `ARKNET_*` env var
+      # with `deny_unknown_fields`, so test-scoped env vars under that
+      # prefix would break `NodeConfig::load` mid-test.
       - name: Test
+        env:
+          STORIES260K_FIXTURE_PATH: ${{ steps.fixture_posix.outputs.path || steps.fixture_windows.outputs.path }}
         run: cargo test --workspace --all-features
 
   audit:
