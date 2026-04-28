@@ -6,7 +6,7 @@
 //!
 //! Uses the `stories260K` fixture — a 260K-parameter TinyLlama trained
 //! on TinyStories, pinned at SHA-256 in the test setup. Fixture is
-//! fetched on demand and cached under `/tmp/arknet-test-fixtures/`.
+//! fetched on demand and cached under `<tempdir>/arknet-test-fixtures/`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,7 +24,7 @@ const STORIES260K_SHA256: &str = "270cba1bd5109f42d03350f60406024560464db173c0e3
 fn fixture_dir() -> PathBuf {
     std::env::var("ARKNET_TEST_FIXTURES_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp/arknet-test-fixtures"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("arknet-test-fixtures"))
 }
 
 fn fixture_path() -> PathBuf {

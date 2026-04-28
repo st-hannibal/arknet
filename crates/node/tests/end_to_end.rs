@@ -27,7 +27,11 @@ fn fixture_path() -> Option<PathBuf> {
         let p = PathBuf::from(p);
         return p.exists().then_some(p);
     }
-    let default = PathBuf::from("/tmp/arknet-test-fixtures/stories260K.gguf");
+    // Platform temp dir — Windows returns something like
+    // `C:\Users\runneradmin\AppData\Local\Temp\`, which is absolute.
+    let default = std::env::temp_dir()
+        .join("arknet-test-fixtures")
+        .join("stories260K.gguf");
     if default.exists() && verify(&default) {
         return Some(default);
     }

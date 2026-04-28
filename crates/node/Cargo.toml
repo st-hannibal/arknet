@@ -48,7 +48,11 @@ parking_lot          = { workspace = true }
 
 # Metrics — facade + prometheus backend (D5)
 metrics              = { workspace = true }
-metrics-exporter-prometheus = "0.16"
+# We only use the recorder + handle for pull-mode rendering behind our own
+# axum /metrics route; the crate's default features (http-listener,
+# push-gateway) drag in hyper-rustls → rustls → aws-lc-sys, which keep
+# re-introducing security advisories. Disable them.
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
 
 # HTTP RPC endpoint + /metrics server (D5, D8)
 axum                 = { workspace = true }

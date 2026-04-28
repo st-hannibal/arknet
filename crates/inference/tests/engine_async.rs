@@ -29,7 +29,11 @@ fn fixture_path() -> Option<PathBuf> {
         let p = PathBuf::from(p);
         return p.exists().then_some(p);
     }
-    let default = PathBuf::from("/tmp/arknet-test-fixtures/stories260K.gguf");
+    // Use the platform temp dir so Windows resolves to an absolute path
+    // with a drive letter (`Url::from_file_path` rejects relative paths).
+    let default = std::env::temp_dir()
+        .join("arknet-test-fixtures")
+        .join("stories260K.gguf");
     if default.exists() {
         return Some(default);
     }

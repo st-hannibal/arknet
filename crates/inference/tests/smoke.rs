@@ -11,7 +11,13 @@ fn fixture_path() -> Option<PathBuf> {
     let p = std::env::var("ARKNET_TEST_STORIES260K")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| Some(PathBuf::from("/tmp/arknet-test-fixtures/stories260K.gguf")))?;
+        .or_else(|| {
+            Some(
+                std::env::temp_dir()
+                    .join("arknet-test-fixtures")
+                    .join("stories260K.gguf"),
+            )
+        })?;
     if p.exists() {
         Some(p)
     } else {
