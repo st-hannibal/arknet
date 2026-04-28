@@ -134,14 +134,33 @@ fn emit_link_flags(dst: &Path, backend: GpuBackend) {
     // CMake drops archives into `<build>/lib` and `<build>/build/src` etc.
     // We emit a broad search path and name each archive. The set below is
     // what llama.cpp b8951 produces; regenerate if the pinned SHA bumps.
+    //
+    // Windows MSVC also puts the archives under `build/src/Release/`,
+    // `build/ggml/src/Release/`, etc. — because CMake uses multi-config
+    // generators on Windows. We add those paths for Windows targets only.
     let lib = dst.join("lib");
-    let build64 = dst.join("build").join("src");
+    let build_src = dst.join("build").join("src");
+    let build_ggml_src = dst.join("build").join("ggml").join("src");
     println!("cargo:rustc-link-search=native={}", lib.display());
-    println!("cargo:rustc-link-search=native={}", build64.display());
-    println!(
-        "cargo:rustc-link-search=native={}",
-        dst.join("build").join("ggml").join("src").display()
-    );
+    println!("cargo:rustc-link-search=native={}", build_src.display());
+    println!("cargo:rustc-link-search=native={}", build_ggml_src.display());
+
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "windows" {
+        // MSVC multi-config generator emits into a Release/ subfolder.
+        println!(
+            "cargo:rustc-link-search=native={}",
+            build_src.join("Release").display()
+        );
+        println!(
+            "cargo:rustc-link-search=native={}",
+            build_ggml_src.join("Release").display()
+        );
+        println!(
+            "cargo:rustc-link-search=native={}",
+            lib.join("Release").display()
+        );
+    }
 
     // Primary libraries. Order matters for static linking: higher-level
     // archives must come before the lower-level ones they depend on so
@@ -149,8 +168,8 @@ fn emit_link_flags(dst: &Path, backend: GpuBackend) {
     //
     // On macOS the default build includes BLAS offload (libggml-blas),
     // which must be linked; omitting it leaves `_ggml_backend_blas_reg`
-    // unresolved. It's harmless on Linux (archive just isn't there).
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    // unresolved. Linux and Windows don't produce that archive with our
+    // CMake options, so we gate the name on macOS only.
     let mut static_libs: Vec<&str> = vec!["llama"];
     if target_os == "macos" {
         static_libs.push("ggml-blas");
@@ -173,6 +192,12 @@ fn emit_link_flags(dst: &Path, backend: GpuBackend) {
                 println!("cargo:rustc-link-lib=framework=MetalKit");
                 println!("cargo:rustc-link-lib=framework=MetalPerformanceShaders");
             }
+        }
+        "windows" => {
+            // MSVC links its C++ runtime and CRT automatically; no equivalent
+            // of `-lstdc++` / `-lm` / `-lpthread` is needed. If a future
+            // llama.cpp bump introduces a Win32 dep (e.g. `bcrypt`), list
+            // it here explicitly.
         }
         "linux" => {
             println!("cargo:rustc-link-lib=dylib=m");

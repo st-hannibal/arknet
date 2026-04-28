@@ -44,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,6 +52,12 @@ jobs:
       - name: Install cmake (linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+      # macOS ships with cmake on GitHub runners. Windows ships Chocolatey
+      # and VS 2022; we install cmake via chocolatey to be version-stable.
+      - name: Install cmake (windows)
+        if: runner.os == 'Windows'
+        run: choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+        shell: pwsh
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.86.0
