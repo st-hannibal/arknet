@@ -10,6 +10,7 @@ mod cli;
 mod errors;
 mod hardware;
 mod logging;
+mod metrics;
 mod paths;
 mod runtime;
 

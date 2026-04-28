@@ -79,7 +79,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Metrics
 prometheus   = "0.13"
-metrics      = "0.23"
+metrics      = "0.24"
 
 # CLI
 clap         = { version = "4.5", features = ["derive", "env"] }
