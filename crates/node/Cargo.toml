@@ -69,4 +69,9 @@ url                  = "2.5"
 
 [dev-dependencies]
 tempfile             = "3.10"
-tokio                = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tokio                = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "process"] }
+serde_json           = { workspace = true }
+reqwest              = { workspace = true, features = ["json"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc                 = "0.2"
