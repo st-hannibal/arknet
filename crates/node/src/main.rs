@@ -11,6 +11,7 @@ mod errors;
 mod hardware;
 mod logging;
 mod metrics;
+mod network_boot;
 mod paths;
 mod rpc;
 mod runtime;

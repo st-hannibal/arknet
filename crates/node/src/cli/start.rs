@@ -12,6 +12,7 @@ use tracing::{error, info};
 use crate::errors::{NodeError, Result};
 use crate::hardware::HardwareReport;
 use crate::metrics;
+use crate::network_boot;
 use crate::paths;
 use crate::rpc;
 use crate::runtime::{shutdown, NodeRuntime};
@@ -43,8 +44,17 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
 
     print_banner(&root, &cfg);
 
-    let rt = NodeRuntime::open(root.clone(), cfg.clone()).await?;
     let token = shutdown::install();
+
+    // Boot the P2P network first so the runtime's RPC layer can
+    // reference the handle when answering `/peers`.
+    let (network_handle, network_join) =
+        network_boot::start_network(&root, &cfg.node, &cfg.network, &cfg.roles, token.clone())
+            .await?;
+
+    let rt = NodeRuntime::open(root.clone(), cfg.clone())
+        .await?
+        .with_network(network_handle);
 
     // Launch /metrics in the background — it shuts itself down when
     // the token fires, same as the role body.
@@ -83,6 +93,11 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
     }
     if let Err(e) = rpc_handle.await? {
         error!(error = %e, "rpc server errored on shutdown");
+    }
+    match network_join.await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => error!(error = %e, "network task exited with error"),
+        Err(e) => error!(error = %e, "network task panicked"),
     }
 
     role_result

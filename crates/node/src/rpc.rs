@@ -87,6 +87,7 @@ pub async fn serve(bind: SocketAddr, state: RpcState, shutdown: CancellationToke
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/peers", get(list_peers))
         .route("/v1/models", get(list_models))
         .route("/v1/models/load", post(load_model))
         .route("/v1/inference", post(infer))
@@ -118,6 +119,36 @@ async fn health(State(state): State<RpcState>) -> Json<HealthResponse> {
         status: "ok",
         uptime_seconds: state.started.elapsed().as_secs_f64(),
         version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+// ─── /peers ──────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct PeersResponse {
+    /// Our own libp2p peer id (helpful when wiring up a test cluster).
+    local_peer_id: Option<String>,
+    /// Currently-connected peer ids.
+    connected: Vec<String>,
+}
+
+async fn list_peers(State(state): State<RpcState>) -> Json<PeersResponse> {
+    let Some(net) = state.runtime.network.as_ref() else {
+        return Json(PeersResponse {
+            local_peer_id: None,
+            connected: Vec::new(),
+        });
+    };
+    let connected = match net.connected_peers().await {
+        Ok(peers) => peers.into_iter().map(|p| p.to_string()).collect(),
+        Err(e) => {
+            warn!(error = %e, "failed to query connected peers");
+            Vec::new()
+        }
+    };
+    Json(PeersResponse {
+        local_peer_id: Some(net.local_peer_id().to_string()),
+        connected,
     })
 }
 
@@ -321,6 +352,7 @@ async fn temp_runtime_with_manifest(
         model_manager,
         inference,
         data_dir: state.runtime.data_dir.clone(),
+        network: state.runtime.network.clone(),
     })
 }
 

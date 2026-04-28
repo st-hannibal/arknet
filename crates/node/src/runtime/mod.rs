@@ -24,6 +24,7 @@ use std::sync::Arc;
 use arknet_common::config::NodeConfig;
 use arknet_inference::{InferenceConfig, InferenceEngine};
 use arknet_model_manager::{CacheConfig, MockRegistry, ModelManager};
+use arknet_network::NetworkHandle;
 
 use crate::errors::Result;
 use crate::metrics::MetricsRegistry;
@@ -40,6 +41,9 @@ pub struct NodeRuntime {
     pub model_manager: ModelManager,
     pub inference: InferenceEngine,
     pub data_dir: std::path::PathBuf,
+    /// P2P network handle. `None` during unit tests and CLI one-shots that
+    /// don't need to gossip. `arknet start` always boots it.
+    pub network: Option<NetworkHandle>,
 }
 
 impl NodeRuntime {
@@ -75,7 +79,15 @@ impl NodeRuntime {
             model_manager,
             inference,
             data_dir,
+            network: None,
         })
+    }
+
+    /// Attach an already-booted [`NetworkHandle`]. Called by `arknet start`
+    /// after [`crate::network_boot::start_network`] finishes.
+    pub fn with_network(mut self, handle: NetworkHandle) -> Self {
+        self.network = Some(handle);
+        self
     }
 }
 
