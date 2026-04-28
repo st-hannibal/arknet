@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arknet — decentralized AI inference</title>
+<meta name="description" content="Permissionless, censorship-resistant, globally distributed AI inference. One binary. Any combination of roles. OpenAI-compatible API.">
+<style>
+  :root {
+    --bg: #0b0d10;
+    --fg: #e6e8eb;
+    --muted: #8a94a6;
+    --accent: #7aa2ff;
+    --code-bg: #14181e;
+    --border: #222831;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 80px 24px 120px; }
+  h1 { font-size: 40px; margin: 0 0 12px; letter-spacing: -0.02em; }
+  h2 { font-size: 22px; margin: 48px 0 12px; letter-spacing: -0.01em; }
+  p  { margin: 12px 0; color: var(--fg); }
+  p.lead { color: var(--muted); font-size: 18px; margin-bottom: 32px; }
+  a  { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font: 14px/1.5 "SF Mono", Menlo, Consolas, monospace; }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+  }
+  ul { padding-left: 20px; }
+  li { margin: 6px 0; }
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 24px;
+  }
+  footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <span class="badge">Phase 0 · pre-alpha</span>
+  <h1>arknet</h1>
+  <p class="lead">Decentralized AI inference protocol. Permissionless, censorship-resistant, globally distributed. One binary. OpenAI-compatible API.</p>
+
+  <h2>Quick links</h2>
+  <ul>
+    <li><a href="https://github.com/st-hannibal/arknet">GitHub repository</a></li>
+    <li><a href="https://github.com/st-hannibal/arknet/tree/main/docs">Documentation</a></li>
+    <li><a href="https://github.com/st-hannibal/arknet/discussions">Discussions &amp; governance</a></li>
+    <li><a href="https://github.com/st-hannibal/arknet/security/advisories">Security advisories</a></li>
+  </ul>
+
+  <h2>Run a node (when testnet is live)</h2>
+  <p>The one-liner installs a prebuilt <code>arknet</code> binary from GitHub Releases. Until Phase 1 ships a signed release, build from source.</p>
+  <pre>curl -fsSL https://arknet.arkengel.com/install.sh | sh</pre>
+
+  <h2>Build from source (Phase 0)</h2>
+  <pre>git clone --recursive https://github.com/st-hannibal/arknet.git
+cd arknet
+cargo build --release
+./target/release/arknet --help</pre>
+
+  <footer>
+    <p>Apache-2.0 · no warranty · pre-release software.<br>
+    The protocol is designed to be community-operated. This site is a static landing page; no service runs behind it.</p>
+  </footer>
+</main>
+</body>
+</html>

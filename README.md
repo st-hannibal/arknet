@@ -48,8 +48,8 @@ The binary self-manages hardware budgets (GPU/CPU/RAM/bandwidth) per role.
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://gateway.arknet.ai/v1",     # or your local node
-    api_key="ark_..."                             # wallet-derived session token
+    base_url="http://localhost:26657/v1",         # your local node, or any community gateway
+    api_key="ark_..."                              # wallet-derived session token
 )
 
 response = client.chat.completions.create(
@@ -62,7 +62,7 @@ response = client.chat.completions.create(
 **Run a node:**
 
 ```bash
-curl -fsSL https://install.arknet.ai | sh
+curl -fsSL https://arknet.arkengel.com/install.sh | sh
 arknet init --network testnet
 arknet start
 ```
@@ -157,7 +157,7 @@ See [CODING_STANDARDS.md](docs/CODING_STANDARDS.md) for contributor guidelines.
 
 ## Contributing
 
-Pre-alpha. External contributions gated until Phase 2 (public testnet). Follow the [forum](https://forum.arknet.ai) (link placeholder) for announcements.
+Pre-alpha. External contributions gated until Phase 2 (public testnet). Follow [GitHub Discussions](https://github.com/st-hannibal/arknet/discussions) for announcements.
 
 ---
 
