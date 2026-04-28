@@ -64,6 +64,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --workspace --all-targets
+      # Pre-fetch the stories260K test fixture exactly once per runner.
+      # Three parallel inference tests call the same fallback curl path
+      # and race on the download file — deterministic on POSIX (fast
+      # writes hide the race), flaky on Windows. Doing it here makes
+      # the tests hit the already-present-file branch.
+      - name: Fetch test fixtures (posix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/arknet-test-fixtures"
+          curl -sSL --fail \
+            -o "${RUNNER_TEMP}/arknet-test-fixtures/stories260K.gguf" \
+            https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf
+          echo "ARKNET_TEST_STORIES260K=${RUNNER_TEMP}/arknet-test-fixtures/stories260K.gguf" >> "${GITHUB_ENV}"
+      - name: Fetch test fixtures (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'arknet-test-fixtures'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $dest = Join-Path $dir 'stories260K.gguf'
+          Invoke-WebRequest `
+            -Uri 'https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf' `
+            -OutFile $dest
+          "ARKNET_TEST_STORIES260K=$dest" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Test
         run: cargo test --workspace --all-features
 

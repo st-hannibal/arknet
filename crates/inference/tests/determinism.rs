@@ -11,6 +11,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use parking_lot::Mutex;
+
 use arknet_crypto::hash::sha256;
 use arknet_inference::{
     Context, ContextParams, EventSink, InferenceEvent, InferenceMode, Model, ModelLoadParams,
@@ -36,12 +38,21 @@ fn fixture_path() -> PathBuf {
 
 /// Return the fixture path, fetching it if necessary. `None` if the
 /// network fetch fails and no cached copy exists — caller skips.
+///
+/// This binary's three tests run in parallel by default; without the
+/// mutex they all hit the `curl -o` path simultaneously on a cold
+/// runner and clobber each other's writes. Windows surfaced the race;
+/// POSIX just got lucky. In CI the `ARKNET_TEST_STORIES260K` env var
+/// is set by the workflow so the mutex is never actually contended,
+/// but local `cargo test` runs still benefit from it.
 fn ensure_fixture() -> Option<PathBuf> {
+    static FETCH_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = FETCH_LOCK.lock();
+
     let path = fixture_path();
     if verify_fixture(&path) {
         return Some(path);
     }
-    // Try to fetch.
     let _ = std::fs::create_dir_all(fixture_dir());
     let status = std::process::Command::new("curl")
         .args(["-sL", "--fail", "-o", path.to_str()?, STORIES260K_URL])
