@@ -66,3 +66,8 @@ docker-compose.override.yml
 # are not backed up via git. Re-evaluate at Phase 4 before going public.
 CLAUDE.md
 /docs/
+
+# ─── Ephemeral test infrastructure (decision 2026-04-28) ─────────────────
+# Terraform state, AWS credentials, SSH keys, test logs. Runs on the dev
+# machine only — never checked in so the repo stays clean at Phase 4.
+/ops/

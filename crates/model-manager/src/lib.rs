@@ -25,6 +25,7 @@
 
 pub mod cache;
 pub mod errors;
+pub mod genesis;
 pub mod gguf;
 pub mod manager;
 pub mod puller;
@@ -34,6 +35,7 @@ pub mod types;
 
 pub use cache::{Cache, CacheConfig, DEFAULT_CACHE_MAX_BYTES};
 pub use errors::{ModelError, Result};
+pub use genesis::{GenesisModel, GenesisRegistryFile, EMBEDDED_GENESIS_TOML};
 pub use manager::ModelManager;
 pub use puller::Puller;
 pub use registry::{MockRegistry, MockRegistryFile, ModelRegistry};
