@@ -63,6 +63,10 @@ dirs                 = "5.0"
 # HTTP client for `arknet status` / `arknet health` commands
 reqwest              = { workspace = true }
 
+# Encoding helpers used by model-cmd (digest hex parse/print, URL parse)
+hex                  = { workspace = true }
+url                  = "2.5"
+
 [dev-dependencies]
 tempfile             = "3.10"
 tokio                = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
