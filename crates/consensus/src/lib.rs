@@ -26,18 +26,24 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod block_builder;
+pub mod commit;
 pub mod context;
 pub mod errors;
 pub mod height;
+pub mod mempool;
 pub mod proposal;
 pub mod signing;
 pub mod validators;
 pub mod value;
 pub mod vote;
 
+pub use block_builder::{BlockBuilder, BuildParams, BuiltBlock};
+pub use commit::{commit_block, CommitError, CommitReport};
 pub use context::ArknetContext;
 pub use errors::{ConsensusError, Result};
 pub use height::Height;
+pub use mempool::{Mempool, MempoolError};
 pub use proposal::{ChainProposal, ChainProposalPart};
 pub use signing::ArknetSigningProvider;
 pub use validators::{ChainValidator, ChainValidatorSet};

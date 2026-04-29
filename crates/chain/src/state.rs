@@ -314,6 +314,53 @@ impl BlockCtx<'_> {
         self.state.get_account(addr)
     }
 
+    /// Peek the state root that **would** result if all pending SMT
+    /// updates were committed right now, without actually persisting.
+    ///
+    /// Implementation: locks the SMT, stashes current leaf values for
+    /// each pending key, applies the new leaves, records the root,
+    /// then rolls each key back to its stashed value. Safe because
+    /// [`DefaultStore`] is an in-memory HashMap and all operations
+    /// happen under one lock.
+    ///
+    /// # Why consensus needs this
+    ///
+    /// The block proposer must write `state_root` into the header it
+    /// signs — but committing at propose time would persist state for
+    /// a block that may never reach 2/3 precommits. The engine keeps
+    /// the [`BlockCtx`] alive across the voting phase and only calls
+    /// [`commit`](Self::commit) on `Decided`.
+    pub fn preview_state_root(&self) -> Result<StateRoot> {
+        let mut smt = self.state.smt.lock();
+
+        // Stash current leaves (default = zero if absent).
+        let mut stashed: Vec<(H256, AccountLeaf)> =
+            Vec::with_capacity(self.pending_smt_updates.len());
+        for (key, _) in &self.pending_smt_updates {
+            let prev = smt
+                .get(key)
+                .map_err(|e| ChainError::Codec(format!("smt preview get: {e:?}")))?;
+            stashed.push((*key, AccountLeaf(prev.0)));
+        }
+
+        // Apply pending updates → read root.
+        for (key, leaf) in &self.pending_smt_updates {
+            smt.update(*key, leaf.clone())
+                .map_err(|e| ChainError::Codec(format!("smt preview apply: {e:?}")))?;
+        }
+        let root = smt.root().to_owned();
+
+        // Roll back.
+        for (key, leaf) in stashed.into_iter().rev() {
+            smt.update(key, leaf)
+                .map_err(|e| ChainError::Codec(format!("smt preview rollback: {e:?}")))?;
+        }
+
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(root.as_slice());
+        Ok(StateRoot::new(bytes))
+    }
+
     /// Commit all buffered writes. Atomic: either the full block lands or
     /// nothing does.
     pub fn commit(self) -> Result<StateRoot> {
@@ -510,6 +557,42 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(got, entry);
+    }
+
+    #[test]
+    fn preview_state_root_matches_commit_and_is_non_mutating() {
+        let (_tmp, state) = tmp_state();
+        let root_before = state.state_root();
+
+        let mut ctx = state.begin_block();
+        ctx.set_account(
+            &Address::new([1; 20]),
+            &Account {
+                balance: 42,
+                nonce: 0,
+            },
+        )
+        .unwrap();
+        ctx.set_account(
+            &Address::new([2; 20]),
+            &Account {
+                balance: 7,
+                nonce: 1,
+            },
+        )
+        .unwrap();
+
+        // Peek the post-apply root twice; must agree and must not
+        // mutate the canonical tree.
+        let preview_a = ctx.preview_state_root().unwrap();
+        let preview_b = ctx.preview_state_root().unwrap();
+        assert_eq!(preview_a, preview_b);
+        assert_eq!(state.state_root(), root_before);
+
+        // After commit, the canonical root must match the preview.
+        let committed = ctx.commit().unwrap();
+        assert_eq!(committed, preview_a);
+        assert_eq!(state.state_root(), preview_a);
     }
 
     #[test]
