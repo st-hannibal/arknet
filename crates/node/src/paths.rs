@@ -76,6 +76,17 @@ pub fn node_toml(root: &Path) -> PathBuf {
     root.join("node.toml")
 }
 
+/// L1 chain state directory (RocksDB column families live here).
+pub fn l1_dir(root: &Path) -> PathBuf {
+    root.join("l1")
+}
+
+/// Path to the genesis file. Looked up first at `<data-dir>/genesis.toml`
+/// (operator-placed); validators bail at boot if missing.
+pub fn genesis_toml(root: &Path) -> PathBuf {
+    root.join("genesis.toml")
+}
+
 /// Create the standard directory layout if any piece is missing.
 /// Idempotent.
 pub fn ensure_layout(root: &Path) -> Result<()> {
@@ -84,6 +95,7 @@ pub fn ensure_layout(root: &Path) -> Result<()> {
         models_dir(root),
         keys_dir(root),
         logs_dir(root),
+        l1_dir(root),
     ] {
         std::fs::create_dir_all(&dir)
             .map_err(|e| NodeError::Paths(format!("failed to create {}: {}", dir.display(), e)))?;
@@ -120,6 +132,7 @@ mod tests {
         assert!(models_dir(tmp.path()).exists());
         assert!(keys_dir(tmp.path()).exists());
         assert!(logs_dir(tmp.path()).exists());
+        assert!(l1_dir(tmp.path()).exists());
     }
 
     // Scoped env-var setter for tests.

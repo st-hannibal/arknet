@@ -16,6 +16,7 @@ mod paths;
 mod rpc;
 mod runtime;
 mod scheduler;
+mod validator;
 
 use clap::Parser;
 

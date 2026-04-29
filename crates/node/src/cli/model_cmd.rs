@@ -382,5 +382,6 @@ async fn open_runtime_with_manifest(
         inference,
         data_dir: root,
         network: None,
+        consensus: None,
     })
 }

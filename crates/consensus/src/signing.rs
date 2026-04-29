@@ -25,7 +25,8 @@
 
 use borsh::BorshSerialize;
 use malachitebft_core_types::{Signature, SignedMessage, SigningProvider};
-use malachitebft_signing_ed25519::{PrivateKey, PublicKey, Signature as EdSignature};
+pub use malachitebft_signing_ed25519::PrivateKey;
+use malachitebft_signing_ed25519::{PublicKey, Signature as EdSignature};
 
 use arknet_crypto::hash::blake3;
 

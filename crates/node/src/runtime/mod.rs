@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arknet_common::config::NodeConfig;
+use arknet_consensus::engine::ConsensusHandle;
 use arknet_inference::{InferenceConfig, InferenceEngine};
 use arknet_model_manager::{CacheConfig, MockRegistry, ModelManager};
 use arknet_network::NetworkHandle;
@@ -44,6 +45,10 @@ pub struct NodeRuntime {
     /// P2P network handle. `None` during unit tests and CLI one-shots that
     /// don't need to gossip. `arknet start` always boots it.
     pub network: Option<NetworkHandle>,
+    /// Consensus engine handle. `Some` only when [`crate::scheduler::Role::Validator`]
+    /// is running — the RPC layer uses it for `/v1/tx` submission and
+    /// `/v1/status` height reads. `None` on non-validator roles.
+    pub consensus: Option<ConsensusHandle>,
 }
 
 impl NodeRuntime {
@@ -80,6 +85,7 @@ impl NodeRuntime {
             inference,
             data_dir,
             network: None,
+            consensus: None,
         })
     }
 
@@ -87,6 +93,13 @@ impl NodeRuntime {
     /// after [`crate::network_boot::start_network`] finishes.
     pub fn with_network(mut self, handle: NetworkHandle) -> Self {
         self.network = Some(handle);
+        self
+    }
+
+    /// Attach the consensus handle after the validator role has booted
+    /// its engine. Called by [`crate::validator::start_validator`].
+    pub fn with_consensus(mut self, handle: ConsensusHandle) -> Self {
+        self.consensus = Some(handle);
         self
     }
 }

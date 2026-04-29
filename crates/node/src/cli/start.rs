@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use arknet_common::config::NodeConfig;
+use arknet_network::Keypair;
 use clap::Args;
 use tracing::{error, info};
 
@@ -17,6 +18,7 @@ use crate::paths;
 use crate::rpc;
 use crate::runtime::{shutdown, NodeRuntime};
 use crate::scheduler::{self, Role};
+use crate::validator;
 
 #[derive(Args, Debug)]
 pub struct StartArgs {
@@ -46,15 +48,42 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
 
     let token = shutdown::install();
 
+    // One keypair per process — both libp2p PeerId derivation and
+    // consensus signing share the same ed25519 seed (see
+    // `validator::ed25519_from_libp2p`).
+    //
+    // Phase 1 Week 7-8: generated fresh every start. Persistence +
+    // load-from-disk at `<data-dir>/keys/node.key` ships with the
+    // operator key management work in Week 9.
+    let keypair = Keypair::generate_ed25519();
+
     // Boot the P2P network first so the runtime's RPC layer can
     // reference the handle when answering `/peers`.
-    let (network_handle, network_join) =
-        network_boot::start_network(&root, &cfg.node, &cfg.network, &cfg.roles, token.clone())
-            .await?;
+    let (network_handle, network_join) = network_boot::start_network(
+        &root,
+        &cfg.node,
+        &cfg.network,
+        &cfg.roles,
+        keypair.clone(),
+        token.clone(),
+    )
+    .await?;
 
-    let rt = NodeRuntime::open(root.clone(), cfg.clone())
+    let mut rt = NodeRuntime::open(root.clone(), cfg.clone())
         .await?
-        .with_network(network_handle);
+        .with_network(network_handle.clone());
+
+    // Boot the validator role's consensus engine up front — the RPC
+    // layer picks it up via `rt.consensus` when it starts below.
+    let consensus_join = if role == Role::Validator {
+        let (handle, join) =
+            validator::start_validator(&root, &keypair, network_handle.clone(), token.clone())
+                .await?;
+        rt = rt.with_consensus(handle);
+        Some(join)
+    } else {
+        None
+    };
 
     // Launch /metrics in the background — it shuts itself down when
     // the token fires, same as the role body.
@@ -93,6 +122,13 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
     }
     if let Err(e) = rpc_handle.await? {
         error!(error = %e, "rpc server errored on shutdown");
+    }
+    if let Some(join) = consensus_join {
+        match join.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => error!(error = %e, "consensus engine exited with error"),
+            Err(e) => error!(error = %e, "consensus engine panicked"),
+        }
     }
     match network_join.await {
         Ok(Ok(())) => {}

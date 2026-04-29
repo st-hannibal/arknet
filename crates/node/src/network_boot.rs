@@ -22,18 +22,19 @@ use crate::errors::{NodeError, Result};
 
 /// Boot the network subsystem and return its handle + the task
 /// JoinHandle the caller awaits on shutdown.
+///
+/// The caller provides a `keypair` so higher layers (consensus signing
+/// in particular) can re-use the same 32-byte ed25519 seed — one
+/// identity serves both libp2p PeerId derivation and malachite's
+/// signing provider.
 pub async fn start_network(
     data_dir: &Path,
     node: &NodeSection,
     net: &NetworkSection,
     roles: &arknet_common::config::RolesSection,
+    keypair: Keypair,
     shutdown: CancellationToken,
 ) -> Result<(NetworkHandle, JoinHandle<arknet_network::Result<()>>)> {
-    // Phase 1 Week 5-6: generate a fresh keypair every start. Key
-    // persistence + loading from `<data-dir>/keys/p2p.key` ships with
-    // the operator key management work in Week 9.
-    let keypair = Keypair::generate_ed25519();
-
     let listen_addrs = net_listen_addrs(net)?;
     let bootstrap = parse_multiaddrs(&net.bootstrap_peers)
         .map_err(|e| NodeError::Config(format!("bootstrap_peers: {e}")))?;
