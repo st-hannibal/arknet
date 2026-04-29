@@ -22,10 +22,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arknet_common::config::NodeConfig;
+use arknet_compute::ComputeJobRunner;
 use arknet_consensus::engine::ConsensusHandle;
 use arknet_inference::{InferenceConfig, InferenceEngine};
 use arknet_model_manager::{CacheConfig, MockRegistry, ModelManager};
 use arknet_network::NetworkHandle;
+use arknet_router::Router;
 
 use crate::errors::Result;
 use crate::metrics::MetricsRegistry;
@@ -49,6 +51,11 @@ pub struct NodeRuntime {
     /// is running — the RPC layer uses it for `/v1/tx` submission and
     /// `/v1/status` height reads. `None` on non-validator roles.
     pub consensus: Option<ConsensusHandle>,
+    /// L2 router handle. `Some` only when the `router` role is active.
+    /// The RPC layer forwards `/v1/inference` through this when present.
+    pub router: Option<Router>,
+    /// L2 compute runner. `Some` when the `compute` role is active.
+    pub compute: Option<ComputeJobRunner>,
 }
 
 impl NodeRuntime {
@@ -86,6 +93,8 @@ impl NodeRuntime {
             data_dir,
             network: None,
             consensus: None,
+            router: None,
+            compute: None,
         })
     }
 
@@ -100,6 +109,20 @@ impl NodeRuntime {
     /// its engine. Called by [`crate::validator::start_validator`].
     pub fn with_consensus(mut self, handle: ConsensusHandle) -> Self {
         self.consensus = Some(handle);
+        self
+    }
+
+    /// Attach a router handle (one per process). Called by the
+    /// scheduler when the router role is enabled.
+    pub fn with_router(mut self, router: Router) -> Self {
+        self.router = Some(router);
+        self
+    }
+
+    /// Attach a compute runner (one per process). Called by the
+    /// scheduler when the compute role is enabled.
+    pub fn with_compute(mut self, runner: ComputeJobRunner) -> Self {
+        self.compute = Some(runner);
         self
     }
 }

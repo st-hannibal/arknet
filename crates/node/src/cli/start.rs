@@ -15,6 +15,7 @@ use crate::hardware::HardwareReport;
 use crate::metrics;
 use crate::network_boot;
 use crate::paths;
+use crate::router_role;
 use crate::rpc;
 use crate::runtime::{shutdown, NodeRuntime};
 use crate::scheduler::{self, Role};
@@ -84,6 +85,18 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
     } else {
         None
     };
+
+    // Attach L2 handles based on the selected role. A node can play
+    // multiple roles simultaneously in Phase 2; Phase 1 runs one role
+    // per `arknet start` invocation, but we still wire the L2 pair up
+    // coherently so integration tests can compose them in-process.
+    if role == Role::Router {
+        rt = rt.with_router(router_role::build_router());
+    }
+    if role == Role::Compute {
+        let runner = arknet_compute::ComputeJobRunner::new(rt.inference.clone());
+        rt = rt.with_compute(runner);
+    }
 
     // Launch /metrics in the background — it shuts itself down when
     // the token fires, same as the role body.

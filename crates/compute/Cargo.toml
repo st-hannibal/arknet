@@ -13,6 +13,22 @@ arknet-crypto        = { workspace = true }
 arknet-network       = { workspace = true }
 arknet-inference     = { workspace = true }
 arknet-model-manager = { workspace = true }
+arknet-chain         = { workspace = true }
+
 tokio                = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
+borsh                = { workspace = true }
+serde                = { workspace = true }
+hex                  = { workspace = true }
+blake3               = { workspace = true }
+parking_lot          = { workspace = true }
+futures              = { workspace = true }
+futures-util         = "0.3"
+tokio-stream         = "0.1"
+
+[dev-dependencies]
+tokio                = { workspace = true, features = ["macros", "rt-multi-thread"] }
+arknet-crypto        = { workspace = true }
+tempfile             = "3.10"
+url                  = "2.5"

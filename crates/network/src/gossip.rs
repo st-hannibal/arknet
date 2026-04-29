@@ -59,6 +59,13 @@ pub fn gov_prop() -> IdentTopic {
     topic("gov", "prop")
 }
 
+/// Free-tier quota tick — routers gossip consumption so every peer
+/// converges on the same bucket counts within a heartbeat. Added in
+/// Week 10 alongside the L2 router/compute roles.
+pub fn quota_tick() -> IdentTopic {
+    topic("quota", "tick")
+}
+
 /// Every topic the node may subscribe to — used by tests and
 /// operator-facing CLI commands.
 pub fn all_topics() -> Vec<IdentTopic> {
@@ -69,6 +76,7 @@ pub fn all_topics() -> Vec<IdentTopic> {
         pool_offer(),
         receipt_attest(),
         gov_prop(),
+        quota_tick(),
     ]
 }
 

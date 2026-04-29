@@ -356,6 +356,8 @@ async fn temp_runtime_with_manifest(
         data_dir: state.runtime.data_dir.clone(),
         network: state.runtime.network.clone(),
         consensus: state.runtime.consensus.clone(),
+        router: state.runtime.router.clone(),
+        compute: state.runtime.compute.clone(),
     })
 }
 

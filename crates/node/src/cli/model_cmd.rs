@@ -383,5 +383,7 @@ async fn open_runtime_with_manifest(
         data_dir: root,
         network: None,
         consensus: None,
+        router: None,
+        compute: None,
     })
 }

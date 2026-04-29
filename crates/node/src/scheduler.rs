@@ -58,9 +58,20 @@ impl FromStr for Role {
 /// engine's own tokio task already owns the loop).
 pub async fn run(role: Role, rt: NodeRuntime, shutdown: CancellationToken) -> Result<()> {
     match role {
-        Role::Compute => run_compute(rt, shutdown).await,
+        Role::Compute => {
+            // Compute role gets a real body once a runner is attached.
+            // If none, fall back to the Phase-0 idle compute loop so
+            // the node still starts (compute scheduling without the
+            // L2 router stack is still useful for local CLI driving).
+            if rt.compute.is_some() {
+                crate::compute_role::run(rt, shutdown).await
+            } else {
+                run_compute(rt, shutdown).await
+            }
+        }
+        Role::Router => crate::router_role::run(rt, shutdown).await,
         Role::Validator => run_validator(rt, shutdown).await,
-        Role::Router | Role::Verifier => Err(NodeError::RoleNotImplemented(role.to_string())),
+        Role::Verifier => Err(NodeError::RoleNotImplemented(role.to_string())),
     }
 }
 
@@ -151,9 +162,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn router_and_verifier_roles_error_cleanly() {
-        // Validator now has a body — gated on the consensus handle
-        // being attached; tested separately.
+    async fn verifier_role_errors_cleanly() {
+        // Verifier is still a Phase-1-Week-11 role; it errors out.
+        // Router is tested below because Week 10 gave it a real body.
         let tmp = tempfile::tempdir().unwrap();
         let cfg = arknet_common::config::NodeConfig::default();
         let rt = NodeRuntime::open(tmp.path().to_path_buf(), cfg)
@@ -161,10 +172,20 @@ mod tests {
             .unwrap();
         let shutdown = CancellationToken::new();
 
-        for role in [Role::Router, Role::Verifier] {
-            let err = run(role, rt.clone(), shutdown.clone()).await.unwrap_err();
-            assert!(matches!(err, NodeError::RoleNotImplemented(_)));
-        }
+        let err = run(Role::Verifier, rt, shutdown).await.unwrap_err();
+        assert!(matches!(err, NodeError::RoleNotImplemented(_)));
+    }
+
+    #[tokio::test]
+    async fn router_role_without_handle_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = arknet_common::config::NodeConfig::default();
+        let rt = NodeRuntime::open(tmp.path().to_path_buf(), cfg)
+            .await
+            .unwrap();
+        let shutdown = CancellationToken::new();
+        let err = run(Role::Router, rt, shutdown).await.unwrap_err();
+        assert!(matches!(err, NodeError::Config(_)));
     }
 
     #[tokio::test]

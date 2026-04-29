@@ -7,12 +7,15 @@
 //! with real implementations.
 
 mod cli;
+mod compute_role;
 mod errors;
 mod hardware;
+mod l2_dispatch;
 mod logging;
 mod metrics;
 mod network_boot;
 mod paths;
+mod router_role;
 mod rpc;
 mod runtime;
 mod scheduler;

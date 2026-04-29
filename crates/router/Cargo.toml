@@ -11,6 +11,21 @@ description   = "L2 router role: request intake, node selection, failover, recei
 arknet-common   = { workspace = true }
 arknet-network  = { workspace = true }
 arknet-crypto   = { workspace = true }
+arknet-compute  = { workspace = true }
+
 tokio           = { workspace = true }
+tokio-stream    = "0.1"
 thiserror       = { workspace = true }
 tracing         = { workspace = true }
+async-trait     = { workspace = true }
+parking_lot     = { workspace = true }
+borsh           = { workspace = true }
+futures         = { workspace = true }
+futures-util    = "0.3"
+blake3          = { workspace = true }
+
+[dev-dependencies]
+rand            = { workspace = true }
+tokio           = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-stream    = "0.1"
+arknet-crypto   = { workspace = true }
