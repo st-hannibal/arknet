@@ -41,6 +41,12 @@ malachitebft-core-votekeeper = { package = "informalsystems-malachitebft-core-vo
 malachitebft-signing-ed25519 = { package = "informalsystems-malachitebft-signing-ed25519", version = "0.5.0", features = ["rand"] }
 malachitebft-metrics        = { package = "informalsystems-malachitebft-metrics",        version = "0.5.0" }
 
+[features]
+# Enables the multi-node integration tests. Gated off by default
+# because they stand up real QUIC listeners and can be slow in CI.
+# Run with: `cargo test -p arknet-consensus --features integration-tests --test four_node_bft`.
+integration-tests = []
+
 [dev-dependencies]
 tempfile       = "3.10"
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
