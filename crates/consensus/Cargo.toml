@@ -39,6 +39,7 @@ malachitebft-core-driver    = { package = "informalsystems-malachitebft-core-dri
 malachitebft-core-types     = { package = "informalsystems-malachitebft-core-types",     version = "0.5.0", features = ["borsh", "serde"] }
 malachitebft-core-votekeeper = { package = "informalsystems-malachitebft-core-votekeeper", version = "0.5.0" }
 malachitebft-signing-ed25519 = { package = "informalsystems-malachitebft-signing-ed25519", version = "0.5.0", features = ["rand"] }
+malachitebft-metrics        = { package = "informalsystems-malachitebft-metrics",        version = "0.5.0" }
 
 [dev-dependencies]
 tempfile       = "3.10"

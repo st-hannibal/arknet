@@ -29,9 +29,11 @@
 pub mod block_builder;
 pub mod commit;
 pub mod context;
+pub mod engine;
 pub mod errors;
 pub mod height;
 pub mod mempool;
+pub mod network_bridge;
 pub mod proposal;
 pub mod signing;
 pub mod validators;
