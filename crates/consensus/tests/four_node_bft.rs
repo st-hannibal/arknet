@@ -139,10 +139,8 @@ async fn four_node_cluster_decides_multiple_heights() {
 
     const N: usize = 4;
     let keys = generate_keys(N);
-    let (infos, addresses): (Vec<ValidatorInfo>, Vec<ChainAddress>) = keys
-        .iter()
-        .map(|(_, pk, _)| validator_info(pk, 1))
-        .unzip();
+    let (infos, addresses): (Vec<ValidatorInfo>, Vec<ChainAddress>) =
+        keys.iter().map(|(_, pk, _)| validator_info(pk, 1)).unzip();
     let validator_set = ChainValidatorSet::from_infos(&infos).unwrap();
 
     // Allocate per-node ports up front so we can build the bootstrap
