@@ -30,12 +30,13 @@ use sparse_merkle_tree::{
     blake2b::Blake2bHasher, default_store::DefaultStore, traits::Value, SparseMerkleTree, H256,
 };
 
-use arknet_common::types::{Address, NodeId, StateRoot};
+use arknet_common::types::{Address, Height, NodeId, StateRoot};
 
 use crate::account::Account;
 use crate::errors::{ChainError, Result};
 use crate::stake_entry::StakeEntry;
 use crate::transactions::StakeRole;
+use crate::unbonding::UnbondingEntry;
 use crate::validator::ValidatorInfo;
 
 // ─── Column families ──────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ const CF_STAKES: &str = "stakes";
 const CF_VALIDATORS: &str = "validators";
 const CF_PARAMS: &str = "params";
 const CF_META: &str = "meta"; // last committed state root, height, etc.
+const CF_UNBONDINGS: &str = "unbondings";
 
 // ─── Value wrapper for SMT account leaves ─────────────────────────────────
 
@@ -85,8 +87,19 @@ fn smt_key_for_account(addr: &Address) -> H256 {
     bytes.into()
 }
 
-fn stake_key(node_id: &NodeId, role: StakeRole, pool_id_opt: Option<[u8; 16]>) -> Vec<u8> {
-    let mut k = Vec::with_capacity(32 + 1 + 17);
+/// Stake composite key.
+///
+/// Layout: `node_id(32) | role(1) | pool_present(1) | pool(16?) | delegator_present(1) | delegator(20?)`.
+/// Every `(node_id, role, pool_id?, delegator?)` tuple has exactly one
+/// `StakeEntry` — self-stake is `delegator = None`, each delegator gets
+/// its own entry for pro-rata slashing math (§9.2).
+fn stake_key(
+    node_id: &NodeId,
+    role: StakeRole,
+    pool_id_opt: Option<[u8; 16]>,
+    delegator: Option<&Address>,
+) -> Vec<u8> {
+    let mut k = Vec::with_capacity(32 + 1 + 17 + 21);
     k.extend_from_slice(node_id.as_bytes());
     k.push(role as u8);
     match pool_id_opt {
@@ -98,8 +111,29 @@ fn stake_key(node_id: &NodeId, role: StakeRole, pool_id_opt: Option<[u8; 16]>) -
             k.push(0);
         }
     }
+    match delegator {
+        Some(a) => {
+            k.push(1);
+            k.extend_from_slice(a.as_bytes());
+        }
+        None => {
+            k.push(0);
+        }
+    }
     k
 }
+
+/// Unbonding entry key: `node_id(32) | u64 BE unbond_id(8)`.
+fn unbond_key(node_id: &NodeId, unbond_id: u64) -> Vec<u8> {
+    let mut k = Vec::with_capacity(32 + 8);
+    k.extend_from_slice(node_id.as_bytes());
+    k.extend_from_slice(&unbond_id.to_be_bytes());
+    k
+}
+
+// Meta keys (single-row values under `CF_META`).
+const META_NEXT_UNBOND_ID: &[u8] = b"next_unbond_id";
+const META_CURRENT_HEIGHT: &[u8] = b"current_height";
 
 // ─── State handle ─────────────────────────────────────────────────────────
 
@@ -120,10 +154,17 @@ impl State {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        let cfs = [CF_ACCOUNTS, CF_STAKES, CF_VALIDATORS, CF_PARAMS, CF_META]
-            .iter()
-            .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
-            .collect::<Vec<_>>();
+        let cfs = [
+            CF_ACCOUNTS,
+            CF_STAKES,
+            CF_VALIDATORS,
+            CF_PARAMS,
+            CF_META,
+            CF_UNBONDINGS,
+        ]
+        .iter()
+        .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
+        .collect::<Vec<_>>();
 
         let db = DB::open_cf_descriptors(&opts, path, cfs)
             .map_err(|e| ChainError::Codec(format!("rocksdb open: {e}")))?;
@@ -174,16 +215,22 @@ impl State {
     }
 
     /// Look up a stake entry by its composite key.
+    ///
+    /// `delegator = None` targets the node-operator's self-stake;
+    /// `Some(addr)` targets a specific delegator's position (§9.2
+    /// requires per-delegator entries so pro-rata slashing lines up
+    /// with on-chain evidence).
     pub fn get_stake(
         &self,
         node_id: &NodeId,
         role: StakeRole,
         pool_id: Option<[u8; 16]>,
+        delegator: Option<&Address>,
     ) -> Result<Option<StakeEntry>> {
         let cf = self.cf(CF_STAKES)?;
         match self
             .db
-            .get_cf(cf, stake_key(node_id, role, pool_id))
+            .get_cf(cf, stake_key(node_id, role, pool_id, delegator))
             .map_err(|e| ChainError::Codec(format!("rocksdb get: {e}")))?
         {
             None => Ok(None),
@@ -193,6 +240,44 @@ impl State {
                 Ok(Some(entry))
             }
         }
+    }
+
+    /// Iterate all stake entries bound to `node_id`. The stakes CF is
+    /// prefix-keyed by `node_id`, so RocksDB's iterator stops naturally
+    /// at the next node's prefix.
+    ///
+    /// Used by the validator-set ranker (§9.5) + slashing (§10) to sum
+    /// self + delegated stake and to identify every delegator under a
+    /// node for pro-rata penalties.
+    pub fn iter_stakes_for_node(&self, node_id: &NodeId) -> Result<Vec<StakeEntry>> {
+        let cf = self.cf(CF_STAKES)?;
+        let prefix = node_id.as_bytes();
+        let mode = rocksdb::IteratorMode::From(prefix, rocksdb::Direction::Forward);
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, mode) {
+            let (k, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter: {e}")))?;
+            if !k.starts_with(prefix) {
+                break;
+            }
+            let entry: StakeEntry = borsh::from_slice(&v)
+                .map_err(|e| ChainError::Codec(format!("stake decode: {e}")))?;
+            out.push(entry);
+        }
+        Ok(out)
+    }
+
+    /// Iterate every validator record. Used once per epoch boundary to
+    /// rebuild the active set.
+    pub fn iter_validators(&self) -> Result<Vec<ValidatorInfo>> {
+        let cf = self.cf(CF_VALIDATORS)?;
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (_, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter: {e}")))?;
+            let info: ValidatorInfo = borsh::from_slice(&v)
+                .map_err(|e| ChainError::Codec(format!("validator decode: {e}")))?;
+            out.push(info);
+        }
+        Ok(out)
     }
 
     /// Look up a validator by node id.
@@ -208,6 +293,92 @@ impl State {
                 let v: ValidatorInfo = borsh::from_slice(&bytes)
                     .map_err(|e| ChainError::Codec(format!("validator decode: {e}")))?;
                 Ok(Some(v))
+            }
+        }
+    }
+
+    /// Retrieve an unbonding entry by its composite `(node_id, unbond_id)`
+    /// key.
+    pub fn get_unbonding(
+        &self,
+        node_id: &NodeId,
+        unbond_id: u64,
+    ) -> Result<Option<UnbondingEntry>> {
+        let cf = self.cf(CF_UNBONDINGS)?;
+        match self
+            .db
+            .get_cf(cf, unbond_key(node_id, unbond_id))
+            .map_err(|e| ChainError::Codec(format!("rocksdb get: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => {
+                let e: UnbondingEntry = borsh::from_slice(&bytes)
+                    .map_err(|e| ChainError::Codec(format!("unbonding decode: {e}")))?;
+                Ok(Some(e))
+            }
+        }
+    }
+
+    /// Iterate every pending unbonding for a node. Used by
+    /// `StakeOp::Complete` to validate and by slashing to trim
+    /// in-flight amounts.
+    pub fn iter_unbondings_for_node(&self, node_id: &NodeId) -> Result<Vec<UnbondingEntry>> {
+        let cf = self.cf(CF_UNBONDINGS)?;
+        let prefix = node_id.as_bytes();
+        let mode = rocksdb::IteratorMode::From(prefix, rocksdb::Direction::Forward);
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, mode) {
+            let (k, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter: {e}")))?;
+            if !k.starts_with(prefix) {
+                break;
+            }
+            let entry: UnbondingEntry = borsh::from_slice(&v)
+                .map_err(|e| ChainError::Codec(format!("unbonding decode: {e}")))?;
+            out.push(entry);
+        }
+        Ok(out)
+    }
+
+    /// Read the last-committed block height. Used to bootstrap the
+    /// consensus engine after a restart. Returns `None` on a fresh chain.
+    pub fn current_height(&self) -> Result<Option<Height>> {
+        let cf = self.cf(CF_META)?;
+        match self
+            .db
+            .get_cf(cf, META_CURRENT_HEIGHT)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => {
+                if bytes.len() != 8 {
+                    return Err(ChainError::Codec(format!(
+                        "current_height expected 8 bytes, got {}",
+                        bytes.len()
+                    )));
+                }
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&bytes);
+                Ok(Some(u64::from_be_bytes(arr)))
+            }
+        }
+    }
+
+    /// Read the monotonic unbonding-id counter.
+    pub fn next_unbond_id(&self) -> Result<u64> {
+        let cf = self.cf(CF_META)?;
+        match self
+            .db
+            .get_cf(cf, META_NEXT_UNBOND_ID)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get: {e}")))?
+        {
+            None => Ok(0),
+            Some(bytes) => {
+                if bytes.len() != 8 {
+                    return Err(ChainError::Codec("next_unbond_id invalid length".into()));
+                }
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&bytes);
+                Ok(u64::from_be_bytes(arr))
             }
         }
     }
@@ -229,6 +400,10 @@ impl State {
             batch: WriteBatch::default(),
             pending_smt_updates: Vec::new(),
             account_overlay: std::collections::HashMap::new(),
+            stake_overlay: std::collections::HashMap::new(),
+            unbonding_overlay: std::collections::HashMap::new(),
+            pending_next_unbond_id: None,
+            pending_current_height: None,
         }
     }
 
@@ -255,9 +430,26 @@ pub struct BlockCtx<'s> {
     /// Most recent uncommitted account writes this block. `None` means
     /// the account was explicitly emptied and should read as missing.
     account_overlay: std::collections::HashMap<Address, Option<Account>>,
+    /// Stake writes buffered this block. Key mirrors the stake_key()
+    /// byte layout; `None` marks a deletion so later reads in the same
+    /// block see "absent" rather than the on-disk value.
+    stake_overlay: std::collections::HashMap<Vec<u8>, Option<StakeEntry>>,
+    /// Unbonding writes buffered this block (same semantics).
+    unbonding_overlay: std::collections::HashMap<Vec<u8>, Option<UnbondingEntry>>,
+    /// Pending next-unbond-id counter (overlay over META).
+    pending_next_unbond_id: Option<u64>,
+    /// Pending current-height (overlay over META).
+    pending_current_height: Option<Height>,
 }
 
 impl BlockCtx<'_> {
+    /// Borrow the underlying [`State`]. Used by staking handlers that
+    /// need to issue reads (`get_stake`, `get_unbonding`,
+    /// `next_unbond_id`) while holding a mutable block context.
+    pub fn state(&self) -> &State {
+        self.state
+    }
+
     /// Buffer an account write.
     pub fn set_account(&mut self, addr: &Address, acct: &Account) -> Result<()> {
         let cf = self.state.cf(CF_ACCOUNTS)?;
@@ -275,24 +467,113 @@ impl BlockCtx<'_> {
         Ok(())
     }
 
-    /// Buffer a stake entry write.
+    /// Buffer a stake entry write. `delegator = None` targets the
+    /// node operator's self-stake.
     pub fn set_stake(
         &mut self,
         node_id: &NodeId,
         role: StakeRole,
         pool_id: Option<[u8; 16]>,
+        delegator: Option<&Address>,
         entry: &StakeEntry,
     ) -> Result<()> {
         let cf = self.state.cf(CF_STAKES)?;
-        let key = stake_key(node_id, role, pool_id);
+        let key = stake_key(node_id, role, pool_id, delegator);
         if entry.is_empty() {
             self.batch.delete_cf(cf, &key);
+            self.stake_overlay.insert(key, None);
         } else {
             let bytes = borsh::to_vec(entry)
                 .map_err(|e| ChainError::Codec(format!("stake encode: {e}")))?;
             self.batch.put_cf(cf, &key, &bytes);
+            self.stake_overlay.insert(key, Some(entry.clone()));
         }
         Ok(())
+    }
+
+    /// Buffer an unbonding-entry write.
+    pub fn set_unbonding(&mut self, node_id: &NodeId, entry: &UnbondingEntry) -> Result<()> {
+        let cf = self.state.cf(CF_UNBONDINGS)?;
+        let key = unbond_key(node_id, entry.unbond_id);
+        let bytes = borsh::to_vec(entry)
+            .map_err(|e| ChainError::Codec(format!("unbonding encode: {e}")))?;
+        self.batch.put_cf(cf, &key, &bytes);
+        self.unbonding_overlay.insert(key, Some(entry.clone()));
+        Ok(())
+    }
+
+    /// Remove an unbonding entry (called on `StakeOp::Complete` after
+    /// the 14-day window has passed).
+    pub fn delete_unbonding(&mut self, node_id: &NodeId, unbond_id: u64) -> Result<()> {
+        let cf = self.state.cf(CF_UNBONDINGS)?;
+        let key = unbond_key(node_id, unbond_id);
+        self.batch.delete_cf(cf, &key);
+        self.unbonding_overlay.insert(key, None);
+        Ok(())
+    }
+
+    /// Record the next-unbond-id counter. Caller increments by 1 and
+    /// passes in; the commit hook persists.
+    pub fn set_next_unbond_id(&mut self, next: u64) -> Result<()> {
+        let cf = self.state.cf(CF_META)?;
+        self.batch
+            .put_cf(cf, META_NEXT_UNBOND_ID, next.to_be_bytes());
+        self.pending_next_unbond_id = Some(next);
+        Ok(())
+    }
+
+    /// Record the current block height in META. Called by commit
+    /// bookkeeping so `State::current_height()` survives restart.
+    pub fn set_current_height(&mut self, height: Height) -> Result<()> {
+        let cf = self.state.cf(CF_META)?;
+        self.batch
+            .put_cf(cf, META_CURRENT_HEIGHT, height.to_be_bytes());
+        self.pending_current_height = Some(height);
+        Ok(())
+    }
+
+    /// Look up a stake entry, consulting this block's overlay first.
+    pub fn get_stake(
+        &self,
+        node_id: &NodeId,
+        role: StakeRole,
+        pool_id: Option<[u8; 16]>,
+        delegator: Option<&Address>,
+    ) -> Result<Option<StakeEntry>> {
+        let key = stake_key(node_id, role, pool_id, delegator);
+        if let Some(entry) = self.stake_overlay.get(&key) {
+            return Ok(entry.clone());
+        }
+        self.state.get_stake(node_id, role, pool_id, delegator)
+    }
+
+    /// Look up an unbonding entry, consulting this block's overlay first.
+    pub fn get_unbonding(
+        &self,
+        node_id: &NodeId,
+        unbond_id: u64,
+    ) -> Result<Option<UnbondingEntry>> {
+        let key = unbond_key(node_id, unbond_id);
+        if let Some(entry) = self.unbonding_overlay.get(&key) {
+            return Ok(entry.clone());
+        }
+        self.state.get_unbonding(node_id, unbond_id)
+    }
+
+    /// Read the next-unbond-id counter, honoring any in-block override.
+    pub fn next_unbond_id(&self) -> Result<u64> {
+        if let Some(v) = self.pending_next_unbond_id {
+            return Ok(v);
+        }
+        self.state.next_unbond_id()
+    }
+
+    /// Read the current chain height, honoring any in-block override.
+    pub fn current_height(&self) -> Result<Option<Height>> {
+        if let Some(h) = self.pending_current_height {
+            return Ok(Some(h));
+        }
+        self.state.current_height()
     }
 
     /// Buffer a validator record write.
@@ -301,6 +582,14 @@ impl BlockCtx<'_> {
         let bytes =
             borsh::to_vec(info).map_err(|e| ChainError::Codec(format!("validator encode: {e}")))?;
         self.batch.put_cf(cf, node_id.as_bytes(), &bytes);
+        Ok(())
+    }
+
+    /// Remove a validator (e.g. evicted at epoch boundary for failing the
+    /// post-bootstrap `min_stake(Validator)` check).
+    pub fn delete_validator(&mut self, node_id: &NodeId) -> Result<()> {
+        let cf = self.state.cf(CF_VALIDATORS)?;
+        self.batch.delete_cf(cf, node_id.as_bytes());
         Ok(())
     }
 
@@ -548,12 +837,12 @@ mod tests {
         };
 
         let mut ctx = state.begin_block();
-        ctx.set_stake(&node_id, StakeRole::Compute, None, &entry)
+        ctx.set_stake(&node_id, StakeRole::Compute, None, None, &entry)
             .unwrap();
         ctx.commit().unwrap();
 
         let got = state
-            .get_stake(&node_id, StakeRole::Compute, None)
+            .get_stake(&node_id, StakeRole::Compute, None, None)
             .unwrap()
             .unwrap();
         assert_eq!(got, entry);

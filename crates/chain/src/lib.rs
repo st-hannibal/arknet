@@ -24,18 +24,24 @@
 pub mod account;
 pub mod apply;
 pub mod block;
+pub mod bootstrap;
 pub mod errors;
 pub mod fee_market;
 pub mod genesis;
 pub mod receipt;
+pub mod stake_apply;
 pub mod stake_entry;
 pub mod state;
 pub mod transactions;
+pub mod unbonding;
 pub mod validator;
 
 pub use account::Account;
 pub use apply::{apply_tx, RejectReason, TxOutcome};
 pub use block::{check_block_size, receipt_root, tx_root, Block, BlockHeader, MAX_BLOCK_BYTES};
+pub use bootstrap::{
+    in_bootstrap_epoch, BOOTSTRAP_MAX_BLOCKS, BOOTSTRAP_VALIDATOR_TARGET, EPOCH_LENGTH_BLOCKS,
+};
 pub use errors::{ChainError, Result};
 pub use fee_market::{next_base_fee, BASE_FEE_MAX_CHANGE_DENOM, MIN_BASE_FEE};
 pub use genesis::{load_genesis, GenesisConfig, GenesisParams, GenesisValidator};
@@ -43,10 +49,14 @@ pub use receipt::{
     ComputeProof, DaLayer, DaReference, InferenceReceipt, Quantization, ReceiptBatch,
     TeeAttestation, MAX_RECEIPT_BATCH_BYTES, MAX_RECEIPT_BYTES, RECEIPT_BATCH_MAX,
 };
+pub use stake_apply::{
+    apply_stake_op, REDELEGATE_COOLDOWN_BLOCKS, STAKE_OP_GAS, UNBONDING_PERIOD_BLOCKS,
+};
 pub use stake_entry::StakeEntry;
 pub use state::{BlockCtx, State};
 pub use transactions::{
     check_signed_tx_size, OnChainModelManifest, Proposal, SignedTransaction, StakeOp, StakeRole,
     Transaction, VoteChoice, MAX_SIGNED_TX_BYTES,
 };
+pub use unbonding::UnbondingEntry;
 pub use validator::ValidatorInfo;

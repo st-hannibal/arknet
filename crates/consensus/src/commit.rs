@@ -74,6 +74,16 @@ impl From<arknet_chain::errors::ChainError> for CommitError {
 
 /// Apply the decided `block` to `state`, commit atomically, and prune
 /// the mempool of any transactions that landed.
+///
+/// Also runs, inside the same atomic context:
+///
+/// - `set_current_height(block.header.height)` — keeps
+///   `apply_tx`'s bootstrap-epoch check (§9.4) reading the correct
+///   height, and survives restart via RocksDB.
+/// - `staking::recompute_validator_set` iff the new height lands on
+///   an epoch boundary (§16 `EPOCH_LENGTH_BLOCKS`). The recompute
+///   happens AFTER the block's transactions so stake deposits from
+///   this block count toward next-epoch membership.
 pub fn commit_block(
     state: &State,
     mempool: &mut Mempool,
@@ -103,6 +113,23 @@ pub fn commit_block(
             }
         }
     }
+
+    // Epoch rotation (§9.5 + §16 `EPOCH_LENGTH_BLOCKS`). Run before
+    // the state-root preview so the rotation is part of the same
+    // root the block header commits to.
+    if arknet_chain::bootstrap::is_epoch_boundary(block.header.height) {
+        let active = arknet_staking::recompute_validator_set(&mut ctx, block.header.height)
+            .map_err(|e| CommitError::ChainState(format!("recompute_validator_set: {e}")))?;
+        tracing::info!(
+            height = block.header.height,
+            active_validators = active,
+            "validator-set recomputed at epoch boundary"
+        );
+    }
+
+    // Persist the committed height so bootstrap checks in the next
+    // block's `apply_tx` see the correct value.
+    ctx.set_current_height(block.header.height)?;
 
     // Compute the post-replay root while the ctx is still mutable.
     let replayed_root = ctx.preview_state_root()?;

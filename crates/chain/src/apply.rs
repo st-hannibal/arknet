@@ -23,11 +23,11 @@
 //! in Week 7-8. Week 3-4 implements the burn side only, using the tx's
 //! `fee` field as the gas budget priced at 1 ark_atom/gas.
 
-use arknet_common::types::{Address, Amount, Gas, Nonce};
+use arknet_common::types::{Address, Amount, Gas, Height, Nonce};
 
 use crate::errors::{ChainError, Result};
 use crate::state::BlockCtx;
-use crate::transactions::{SignedTransaction, StakeOp, Transaction};
+use crate::transactions::{SignedTransaction, Transaction};
 
 /// Outcome of a single `apply_tx` call. Lenient: rejection is a normal
 /// return, not a [`ChainError`].
@@ -70,6 +70,34 @@ pub enum RejectReason {
     /// Self-transfer (`from == to`) — disallowed to keep the transfer flow
     /// simple and avoid nonce-only traffic that mutates nothing.
     SelfTransfer,
+    /// No stake entry exists for the (node, role, pool, delegator) tuple.
+    /// Surfaced by Withdraw / Redelegate.
+    StakeNotFound,
+    /// Withdraw / Redelegate asked for more than the entry holds.
+    StakeExceeded {
+        /// Amount requested.
+        requested: Amount,
+        /// Amount available in the entry.
+        available: Amount,
+    },
+    /// `StakeOp::Complete` called before the unbonding window elapsed.
+    UnbondingNotComplete {
+        /// Current block height.
+        current: Height,
+        /// Earliest height at which Complete may land.
+        completes_at: Height,
+    },
+    /// `StakeOp::Complete` targets a non-existent unbonding id.
+    UnbondingNotFound,
+    /// Redelegate rejected during the 1-day cooldown.
+    RedelegateCooldown {
+        /// Blocks still to wait.
+        blocks_remaining: Height,
+    },
+    /// Third-party delegation (delegator != sender) — reserved for Phase 2.
+    ThirdPartyDelegation,
+    /// Redelegate source and destination are the same node.
+    RedelegateSameNode,
     /// Transaction variant is not yet live in this phase — see the phase
     /// plan.
     NotYetImplemented(&'static str),
@@ -85,6 +113,10 @@ pub const BASE_TRANSFER_GAS: Gas = 21_000;
 /// Errors ([`ChainError`]) are reserved for unrecoverable issues (DB I/O,
 /// encoding) — they abort the whole block.
 pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutcome> {
+    // Height is sourced from META; the stake handlers fall back to 0
+    // on a fresh chain (block 0) which is correct — bootstrap-epoch
+    // checks treat block 0 as inside the window.
+    let height = ctx.current_height()?.unwrap_or(0);
     match &tx.tx {
         Transaction::Transfer {
             from,
@@ -93,20 +125,34 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
             nonce,
             fee,
         } => apply_transfer(ctx, from, to, *amount, *nonce, *fee),
-        Transaction::StakeOp(op) => apply_stake_op(ctx, op),
+        Transaction::StakeOp(op) => {
+            let sender = derive_address_from_signer(&tx.signer);
+            crate::stake_apply::apply_stake_op(ctx, op, &sender, height)
+        }
         Transaction::ReceiptBatch(_) => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
             "ReceiptBatch application (Week 10-11)",
         ))),
         Transaction::RegisterModel { .. } => Ok(TxOutcome::Rejected(
-            RejectReason::NotYetImplemented("RegisterModel (Week 9+)"),
+            RejectReason::NotYetImplemented("RegisterModel (Week 10+)"),
         )),
         Transaction::GovProposal(_) => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovProposal (Week 9+)",
+            "GovProposal (Week 10+)",
         ))),
         Transaction::GovVote { .. } => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovVote (Week 9+)",
+            "GovVote (Week 10+)",
         ))),
     }
+}
+
+/// Derive the 20-byte account [`Address`] from the signer's public key.
+///
+/// Matches the derivation used by the genesis loader +
+/// [`crate::genesis::genesis_to_validator_info`]: `blake3(pubkey_bytes)[..20]`.
+fn derive_address_from_signer(signer: &arknet_common::types::PubKey) -> Address {
+    let digest = arknet_crypto::hash::blake3(&signer.bytes);
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&digest.as_bytes()[..20]);
+    Address::new(out)
 }
 
 fn apply_transfer(
@@ -164,26 +210,6 @@ fn apply_transfer(
     ctx.set_account(to, &to_acct)?;
 
     Ok(TxOutcome::Applied { gas_used: fee })
-}
-
-fn apply_stake_op(_ctx: &mut BlockCtx<'_>, op: &StakeOp) -> Result<TxOutcome> {
-    // Week 3-4 only lands the type-level wiring. Actual stake semantics
-    // (min-stake gating, unbonding timers, validator-set bookkeeping)
-    // implement in Week 9 once consensus exists to consume them.
-    match op {
-        StakeOp::Deposit { .. } => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "StakeOp::Deposit application (Week 9)",
-        ))),
-        StakeOp::Withdraw { .. } => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "StakeOp::Withdraw (Week 9)",
-        ))),
-        StakeOp::Complete { .. } => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "StakeOp::Complete (Week 9)",
-        ))),
-        StakeOp::Redelegate { .. } => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "StakeOp::Redelegate (Week 9)",
-        ))),
-    }
 }
 
 // Dead-code guard: the unused `ChainError` import would trip clippy if no
@@ -381,19 +407,48 @@ mod tests {
     }
 
     #[test]
-    fn stake_ops_rejected_as_not_yet_implemented() {
+    fn stake_deposit_happy_path_applies() {
+        use crate::transactions::{StakeOp, StakeRole};
+
         let (_tmp, state) = tmp_state();
+        // Derive the sender address from the public key bytes used by `sign`
+        // so the deposit debits the correct account.
+        let signer_pubkey: [u8; 32] = [1; 32];
+        let sender = {
+            let d = arknet_crypto::hash::blake3(&signer_pubkey);
+            let mut a = [0u8; 20];
+            a.copy_from_slice(&d.as_bytes()[..20]);
+            Address::new(a)
+        };
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &sender, 10_000_000);
+            ctx.commit().unwrap();
+        }
+
         let mut ctx = state.begin_block();
         let stx = sign(Transaction::StakeOp(StakeOp::Deposit {
-            node_id: arknet_common::types::NodeId::new([1; 32]),
-            role: crate::transactions::StakeRole::Compute,
+            node_id: arknet_common::types::NodeId::new([9; 32]),
+            role: StakeRole::Validator,
             pool_id: None,
             amount: 2_500,
             delegator: None,
         }));
         match apply_tx(&mut ctx, &stx).unwrap() {
-            TxOutcome::Rejected(RejectReason::NotYetImplemented(_)) => {}
+            TxOutcome::Applied { gas_used } => assert!(gas_used > 0),
             other => panic!("unexpected: {other:?}"),
         }
+        ctx.commit().unwrap();
+
+        let e = state
+            .get_stake(
+                &arknet_common::types::NodeId::new([9; 32]),
+                crate::transactions::StakeRole::Validator,
+                None,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(e.amount, 2_500);
     }
 }

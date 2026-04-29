@@ -6,6 +6,10 @@ rust-version  = { workspace = true }
 license       = { workspace = true }
 repository    = { workspace = true }
 description   = "arknet L1 chain: blocks, state trie, transactions, fee market."
+# Staking handlers get injected into apply_tx via a callback
+# registered at node start-up (see `apply::set_stake_handler`) so
+# this crate does NOT depend on arknet-staking — that would create a
+# chain → staking → chain cycle.
 
 [dependencies]
 arknet-common      = { workspace = true }
