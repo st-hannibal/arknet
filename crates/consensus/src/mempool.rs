@@ -366,7 +366,10 @@ fn extract_sender_nonce_fee(tx: &Transaction) -> Result<(Address, Nonce, Gas), M
             from, nonce, fee, ..
         } => Ok((*from, *nonce, *fee)),
         Transaction::StakeOp(_) => Err(MempoolError::Unsupported("StakeOp (Week 9)")),
-        Transaction::ReceiptBatch(_) => Err(MempoolError::Unsupported("ReceiptBatch (Week 10-11)")),
+        Transaction::ReceiptBatch(_) => Err(MempoolError::Unsupported(
+            "ReceiptBatch (Week 11 mempool lane)",
+        )),
+        Transaction::Dispute(_) => Err(MempoolError::Unsupported("Dispute (Week 12 mempool lane)")),
         Transaction::RegisterModel { .. } => {
             Err(MempoolError::Unsupported("RegisterModel (Week 9+)"))
         }

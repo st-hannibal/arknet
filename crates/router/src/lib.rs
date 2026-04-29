@@ -20,6 +20,7 @@ pub mod candidate;
 pub mod errors;
 pub mod failover;
 pub mod intake;
+pub mod quota_gossip;
 pub mod selection;
 
 pub use arknet_compute::wire::{
@@ -34,4 +35,8 @@ pub use failover::{
     dispatch_with_failover, error_stream, now_ms, RouterStream, PRIMARY_FIRST_TOKEN_TIMEOUT,
 };
 pub use intake::{first_and_rest, verify_request, QuotaPolicy, Router};
+pub use quota_gossip::{
+    absorb_tick_bytes, recent_nonces_shared, run_emitter, spawn_emitter, ChannelTransport,
+    PendingConsumption, QuotaGossipTransport, RecentNonces, DEFAULT_TICK_INTERVAL,
+};
 pub use selection::{pick, rank_for};

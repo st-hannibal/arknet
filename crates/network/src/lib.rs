@@ -38,12 +38,17 @@ pub mod config;
 pub mod errors;
 pub mod gossip;
 pub mod handshake;
+pub mod inference_proto;
 pub mod network;
 pub mod peer;
 
 pub use config::{parse_multiaddrs, NetworkConfig, NetworkId};
 pub use errors::{NetworkError, Result};
 pub use handshake::{HandshakeInfo, PeerRoles, HANDSHAKE_VERSION};
+pub use inference_proto::{
+    build_inference_behaviour, InferenceBehaviour, InferenceCodec, InferenceResponse, WireRequest,
+    WireResponse, INFERENCE_PROTOCOL, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+};
 pub use network::{default_topics, Network, NetworkEvent, NetworkHandle};
 pub use peer::{PeerBook, PeerRecord};
 

@@ -30,7 +30,7 @@ use sparse_merkle_tree::{
     blake2b::Blake2bHasher, default_store::DefaultStore, traits::Value, SparseMerkleTree, H256,
 };
 
-use arknet_common::types::{Address, Height, NodeId, StateRoot};
+use arknet_common::types::{Address, Height, JobId, NodeId, StateRoot};
 
 use crate::account::Account;
 use crate::errors::{ChainError, Result};
@@ -47,6 +47,11 @@ const CF_VALIDATORS: &str = "validators";
 const CF_PARAMS: &str = "params";
 const CF_META: &str = "meta"; // last committed state root, height, etc.
 const CF_UNBONDINGS: &str = "unbondings";
+/// Dedup index for anchored inference receipts.
+/// Keyed by `job_id` (32 bytes); value is the height the receipt
+/// landed at. `Transaction::ReceiptBatch` rejects any receipt whose
+/// `job_id` is already present — §6's "seen exactly once" invariant.
+const CF_RECEIPTS_SEEN: &str = "receipts_seen";
 
 // ─── Value wrapper for SMT account leaves ─────────────────────────────────
 
@@ -161,6 +166,7 @@ impl State {
             CF_PARAMS,
             CF_META,
             CF_UNBONDINGS,
+            CF_RECEIPTS_SEEN,
         ]
         .iter()
         .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
@@ -383,6 +389,17 @@ impl State {
         }
     }
 
+    /// `true` if a receipt for `job_id` was already anchored in a
+    /// prior block. §6 invariant: `ReceiptBatch` must not double-anchor.
+    pub fn is_receipt_seen(&self, job_id: &JobId) -> Result<bool> {
+        let cf = self.cf(CF_RECEIPTS_SEEN)?;
+        Ok(self
+            .db
+            .get_cf(cf, job_id.0)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get receipts_seen: {e}")))?
+            .is_some())
+    }
+
     /// Current state root (reflects committed state only).
     pub fn state_root(&self) -> StateRoot {
         let root = self.smt.lock().root().to_owned();
@@ -402,6 +419,7 @@ impl State {
             account_overlay: std::collections::HashMap::new(),
             stake_overlay: std::collections::HashMap::new(),
             unbonding_overlay: std::collections::HashMap::new(),
+            receipt_seen_overlay: std::collections::HashMap::new(),
             pending_next_unbond_id: None,
             pending_current_height: None,
         }
@@ -436,6 +454,9 @@ pub struct BlockCtx<'s> {
     stake_overlay: std::collections::HashMap<Vec<u8>, Option<StakeEntry>>,
     /// Unbonding writes buffered this block (same semantics).
     unbonding_overlay: std::collections::HashMap<Vec<u8>, Option<UnbondingEntry>>,
+    /// Receipt-seen marks buffered this block. Key: `job_id` bytes;
+    /// value: height at which the receipt anchored.
+    receipt_seen_overlay: std::collections::HashMap<[u8; 32], Height>,
     /// Pending next-unbond-id counter (overlay over META).
     pending_next_unbond_id: Option<u64>,
     /// Pending current-height (overlay over META).
@@ -574,6 +595,25 @@ impl BlockCtx<'_> {
             return Ok(Some(h));
         }
         self.state.current_height()
+    }
+
+    /// `true` if `job_id` was already anchored — checks both the
+    /// committed store and the current block's overlay so a batch that
+    /// contains two receipts with the same `job_id` gets rejected at
+    /// the second one.
+    pub fn is_receipt_seen(&self, job_id: &JobId) -> Result<bool> {
+        if self.receipt_seen_overlay.contains_key(&job_id.0) {
+            return Ok(true);
+        }
+        self.state.is_receipt_seen(job_id)
+    }
+
+    /// Buffer a receipt-seen mark. Idempotent within a block.
+    pub fn mark_receipt_seen(&mut self, job_id: &JobId, height: Height) -> Result<()> {
+        let cf = self.state.cf(CF_RECEIPTS_SEEN)?;
+        self.batch.put_cf(cf, job_id.0, height.to_be_bytes());
+        self.receipt_seen_overlay.insert(job_id.0, height);
+        Ok(())
     }
 
     /// Buffer a validator record write.

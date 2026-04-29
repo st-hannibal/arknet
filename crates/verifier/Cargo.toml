@@ -10,8 +10,16 @@ description   = "L2 verifier role: three-tier output verification via VRF select
 [dependencies]
 arknet-common    = { workspace = true }
 arknet-crypto    = { workspace = true }
-arknet-network   = { workspace = true }
-arknet-inference = { workspace = true }
+arknet-chain     = { workspace = true }
 tokio            = { workspace = true }
 thiserror        = { workspace = true }
 tracing          = { workspace = true }
+async-trait      = { workspace = true }
+blake3           = { workspace = true }
+hex              = { workspace = true }
+
+[dev-dependencies]
+tokio            = { workspace = true, features = ["macros", "rt-multi-thread"] }
+async-trait      = { workspace = true }
+arknet-receipts  = { workspace = true }
+tempfile         = "3.10"

@@ -55,8 +55,8 @@ pub use stake_apply::{
 pub use stake_entry::StakeEntry;
 pub use state::{BlockCtx, State};
 pub use transactions::{
-    check_signed_tx_size, OnChainModelManifest, Proposal, SignedTransaction, StakeOp, StakeRole,
-    Transaction, VoteChoice, MAX_SIGNED_TX_BYTES,
+    check_signed_tx_size, Dispute, OnChainModelManifest, Proposal, SignedTransaction, StakeOp,
+    StakeRole, Transaction, VoteChoice, MAX_SIGNED_TX_BYTES,
 };
 pub use unbonding::UnbondingEntry;
 pub use validator::ValidatorInfo;

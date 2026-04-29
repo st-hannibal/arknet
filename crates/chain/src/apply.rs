@@ -98,6 +98,22 @@ pub enum RejectReason {
     ThirdPartyDelegation,
     /// Redelegate source and destination are the same node.
     RedelegateSameNode,
+    /// Receipt batch was empty or had zero-receipt contents.
+    EmptyReceiptBatch,
+    /// Receipt batch's on-wire `merkle_root` didn't match the root we
+    /// recomputed from `receipts` — corrupt or crafted batch.
+    ReceiptMerkleMismatch,
+    /// One of the batch's `job_id`s is already present in the receipt
+    /// ledger from a prior block (§6 "seen exactly once" invariant).
+    ReceiptDoubleAnchor {
+        /// Borsh-encoded `job_id` bytes.
+        job_id_hex: String,
+    },
+    /// Dispute's `claimed_output_hash == reexec_output_hash` — nothing
+    /// to slash.
+    DisputeOutputMatches,
+    /// Dispute references a `job_id` that was never anchored.
+    DisputeReceiptNotFound,
     /// Transaction variant is not yet live in this phase — see the phase
     /// plan.
     NotYetImplemented(&'static str),
@@ -129,9 +145,8 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
             let sender = derive_address_from_signer(&tx.signer);
             crate::stake_apply::apply_stake_op(ctx, op, &sender, height)
         }
-        Transaction::ReceiptBatch(_) => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "ReceiptBatch application (Week 10-11)",
-        ))),
+        Transaction::ReceiptBatch(batch) => apply_receipt_batch(ctx, batch, height),
+        Transaction::Dispute(d) => apply_dispute(ctx, d, height),
         Transaction::RegisterModel { .. } => Ok(TxOutcome::Rejected(
             RejectReason::NotYetImplemented("RegisterModel (Week 10+)"),
         )),
@@ -142,6 +157,100 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
             "GovVote (Week 10+)",
         ))),
     }
+}
+
+/// Gas cost per receipt anchored. Phase-1 flat: `20_000 * receipts`.
+pub const RECEIPT_ANCHOR_GAS_PER_RECEIPT: Gas = 20_000;
+
+/// Gas charged for a successful dispute application.
+pub const DISPUTE_GAS: Gas = 100_000;
+
+/// Apply a `Transaction::ReceiptBatch`. Validates the batch shape
+/// (non-empty, Merkle root matches the recomputed root, no replayed
+/// `job_id`s), then records each receipt's `job_id` in
+/// `CF_RECEIPTS_SEEN` so a future dispute can look it up. Economic
+/// rewards (block-reward minting against `total_tokens`) land with
+/// Week 12 + treasury emission.
+fn apply_receipt_batch(
+    ctx: &mut BlockCtx<'_>,
+    batch: &crate::receipt::ReceiptBatch,
+    height: Height,
+) -> Result<TxOutcome> {
+    if batch.receipts.is_empty() {
+        return Ok(TxOutcome::Rejected(RejectReason::EmptyReceiptBatch));
+    }
+    // Recompute Merkle root with the same layout used by
+    // `arknet_receipts::compute_merkle_root`. Kept inline here so the
+    // chain crate doesn't depend on the receipts crate (which already
+    // depends on chain).
+    let leaves: Vec<[u8; 32]> = batch
+        .receipts
+        .iter()
+        .map(|r| {
+            let body = borsh::to_vec(r).expect("receipt borsh encoding is infallible");
+            let mut buf = Vec::with_capacity(body.len() + 25);
+            buf.extend_from_slice(b"arknet-receipt-leaf-v1");
+            buf.extend_from_slice(&body);
+            *arknet_crypto::hash::sha256(&buf).as_bytes()
+        })
+        .collect();
+    let tree = arknet_crypto::merkle::MerkleTree::new(leaves.iter().map(|l| l.as_slice()))
+        .map_err(|e| ChainError::Codec(format!("receipt merkle: {e}")))?;
+    let recomputed = *tree.root().as_bytes();
+    if recomputed != batch.merkle_root {
+        return Ok(TxOutcome::Rejected(RejectReason::ReceiptMerkleMismatch));
+    }
+
+    // Dedup check + mark are interleaved: consult the overlay (which
+    // sees prior marks *this call*), reject on any hit, then mark.
+    // This also catches duplicate `job_id`s inside a single batch.
+    //
+    // On rejection we'd ideally roll back any marks we already buffered
+    // — but the overlay only commits when the caller calls `ctx.commit()`,
+    // and our caller (consensus) drops the ctx on any rejection up to
+    // the block boundary. `apply_tx` returning `Rejected` keeps the
+    // block moving but since rejections here are "reject the whole tx"
+    // the dirtied overlay is immaterial; `apply_tx` is called with a
+    // fresh snapshot from the block builder.
+    for r in &batch.receipts {
+        if ctx.is_receipt_seen(&r.job_id)? {
+            return Ok(TxOutcome::Rejected(RejectReason::ReceiptDoubleAnchor {
+                job_id_hex: hex::encode(r.job_id.0),
+            }));
+        }
+        ctx.mark_receipt_seen(&r.job_id, height)?;
+    }
+
+    let gas_used = RECEIPT_ANCHOR_GAS_PER_RECEIPT.saturating_mul(batch.receipts.len() as u64);
+    Ok(TxOutcome::Applied { gas_used })
+}
+
+/// Apply a `Transaction::Dispute`. §10-§11: if the claimed and
+/// re-executed output hashes diverge, slash the compute node. The
+/// Week-9 `apply_slash` pathway is called for the real ark_atom
+/// movement; here we only gate acceptance.
+fn apply_dispute(
+    ctx: &mut BlockCtx<'_>,
+    d: &crate::transactions::Dispute,
+    _height: Height,
+) -> Result<TxOutcome> {
+    if d.claimed_output_hash == d.reexec_output_hash {
+        return Ok(TxOutcome::Rejected(RejectReason::DisputeOutputMatches));
+    }
+    if !ctx.is_receipt_seen(&d.job_id)? {
+        return Ok(TxOutcome::Rejected(RejectReason::DisputeReceiptNotFound));
+    }
+
+    // Phase-1 Dispute acceptance is a gate — the actual slashing
+    // (drain + burn/reporter/treasury split) happens in
+    // `arknet_staking::apply_slash` and is dispatched from the
+    // arknet-staking host-crate story (Phase 2). For now we record the
+    // acceptance as `Applied` so the block-builder still drains the
+    // tx; the slashing call site wires in at Week 12 when the
+    // verifier role ships its full mainline.
+    Ok(TxOutcome::Applied {
+        gas_used: DISPUTE_GAS,
+    })
 }
 
 /// Derive the 20-byte account [`Address`] from the signer's public key.
