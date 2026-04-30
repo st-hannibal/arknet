@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation — arknet</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:24px; }
+  .doc-list { list-style:none; padding:0; }
+  .doc-list li { margin:0; }
+  .doc-list a {
+    display:block; padding:20px; margin:8px 0;
+    background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
+    text-decoration:none; transition:border-color 0.15s;
+  }
+  .doc-list a:hover { border-color:var(--accent); }
+  .doc-list .title { font-size:18px; font-weight:600; color:var(--fg); display:block; }
+  .doc-list .desc { font-size:14px; color:var(--muted); display:block; margin-top:4px; }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
+</nav>
+<main>
+
+<h1>Documentation</h1>
+
+<ul class="doc-list">
+  <li><a href="/docs/getting-started.html">
+    <span class="title">Getting Started</span>
+    <span class="desc">Install arknet, configure your role, start earning ARK in under 5 minutes.</span>
+  </a></li>
+  <li><a href="/docs/tokenomics.html">
+    <span class="title">Tokenomics</span>
+    <span class="desc">ARK supply, emission schedule, reward distribution, staking, slashing, governance.</span>
+  </a></li>
+  <li><a href="/docs/models.html">
+    <span class="title">Genesis Models</span>
+    <span class="desc">10 models from edge to server. SHA-256 verified GGUF artifacts from HuggingFace.</span>
+  </a></li>
+  <li><a href="/docs/developers.html">
+    <span class="title">Developer Guide</span>
+    <span class="desc">OpenAI-compatible API, Python/TypeScript/Rust SDKs, transaction types, dApp integration.</span>
+  </a></li>
+  <li><a href="https://github.com/st-hannibal/arknet/discussions">
+    <span class="title">Forum</span>
+    <span class="desc">Ask questions, report bugs, discuss proposals. Community-run on GitHub Discussions.</span>
+  </a></li>
+  <li><a href="https://github.com/st-hannibal/arknet">
+    <span class="title">Source Code</span>
+    <span class="desc">Rust codebase. 552 tests. Apache-2.0 license. Contributions welcome.</span>
+  </a></li>
+</ul>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+</body>
+</html>

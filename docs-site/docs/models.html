@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Genesis Models — arknet</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:12px; letter-spacing:-0.02em; }
+  h2 { font-size:22px; margin:36px 0 12px; }
+  p { margin:12px 0; } a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; }
+  th { color:var(--muted); font-weight:600; }
+  code { font:13px "SF Mono",Menlo,monospace; background:var(--code-bg); padding:2px 6px; border-radius:4px; }
+  .note { background:var(--code-bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:16px 20px; margin:20px 0; }
+  ul { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  .tier { color:var(--accent); font-weight:600; }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
+</nav>
+<main>
+
+<h1>Genesis Models</h1>
+<p>10 models ship at genesis, covering hardware from Raspberry Pi to server racks. All are GGUF format (Q4_K_M quantization), verified by SHA-256 digest from HuggingFace.</p>
+
+<div class="note">
+<p>Compute nodes only download models they're configured to serve. A typical operator starts with 1-3 models matching their hardware tier.</p>
+</div>
+
+<h2><span class="tier">Tier 1: Edge</span> — 1-4 GB, CPU-only or 4GB VRAM</h2>
+<p>Raspberry Pi 5, smartphones, older laptops.</p>
+<table>
+  <tr><th>Model</th><th>Params</th><th>Size</th><th>SHA-256</th></tr>
+  <tr><td>Llama 3.2 1B Instruct</td><td>1.2B</td><td>1.32 GB</td><td><code>ba345c83...d9ae62a9</code></td></tr>
+  <tr><td>Qwen3.5 4B</td><td>4B</td><td>2.74 GB</td><td><code>00fe7986...69ef11a4</code></td></tr>
+  <tr><td>Gemma 4 E2B Instruct</td><td>2.3B active</td><td>3.11 GB</td><td><code>ac0069eb...ee576845</code></td></tr>
+</table>
+
+<h2><span class="tier">Tier 2: Gamer</span> — 4-8 GB, RTX 3060 or M3/M4 Mac</h2>
+<p>Entry-level GPUs and Apple Silicon laptops.</p>
+<table>
+  <tr><th>Model</th><th>Params</th><th>Size</th><th>SHA-256</th></tr>
+  <tr><td>Qwen2.5 7B Instruct</td><td>7B</td><td>4.68 GB</td><td><code>65b8fcd9...ceaaa1423</code></td></tr>
+  <tr><td>Llama 3.1 8B Instruct</td><td>8B</td><td>4.92 GB</td><td><code>7b064f58...3033557c</code></td></tr>
+  <tr><td>Qwen3.5 9B</td><td>9B</td><td>5.68 GB</td><td><code>03b74727...daf52b7e8</code></td></tr>
+</table>
+
+<h2><span class="tier">Tier 3: Prosumer</span> — 16-24 GB, RTX 4090 or M-series Pro</h2>
+<p>High-end consumer GPUs and workstation Macs.</p>
+<table>
+  <tr><th>Model</th><th>Params</th><th>Size</th><th>SHA-256</th></tr>
+  <tr><td>Gemma 4 26B A4B (MoE)</td><td>25.2B (3.8B active)</td><td>16.87 GB</td><td><code>b8707e57...5a49fde</code></td></tr>
+  <tr><td>Qwen3.6 27B</td><td>27B</td><td>16.82 GB</td><td><code>5ed60d0a...638392a0</code></td></tr>
+  <tr><td>Gemma 4 31B (dense)</td><td>30.7B</td><td>18.32 GB</td><td><code>3bf13fff...ea853474</code></td></tr>
+</table>
+
+<h2><span class="tier">Tier 4: Server</span> — 48+ GB VRAM</h2>
+<p>Multi-GPU workstations and cloud instances.</p>
+<table>
+  <tr><th>Model</th><th>Params</th><th>Size</th><th>SHA-256</th></tr>
+  <tr><td>Qwen3.6 35B A3B (MoE)</td><td>35B (3B active)</td><td>22.1 GB</td><td>verify after download</td></tr>
+</table>
+
+<h2>Adding models after genesis</h2>
+<p>Anyone can register a new model by submitting a <code>RegisterModel</code> transaction with:</p>
+<ul>
+  <li><strong>10,000 ARK deposit</strong> (returned if model is valid)</li>
+  <li><strong>Model ID</strong> — canonical name (e.g. <code>meta-llama/Llama-3.1-8B-Instruct</code>)</li>
+  <li><strong>SHA-256 digest</strong> — of the GGUF artifact</li>
+  <li><strong>Size in bytes</strong> — for download verification</li>
+  <li><strong>Mirror URLs</strong> — where compute nodes can pull the file</li>
+  <li><strong>License</strong> — SPDX identifier</li>
+</ul>
+<p>Compute nodes verify the SHA-256 after downloading — tampered files are rejected before loading into the inference engine.</p>
+
+<h2>Model sources</h2>
+<p>All genesis models are sourced from HuggingFace. Primary GGUF providers:</p>
+<ul>
+  <li><strong>unsloth</strong> — Qwen, Gemma quantizations with Dynamic 2.0</li>
+  <li><strong>bartowski</strong> — Llama, Qwen standard quantizations</li>
+  <li><strong>hugging-quants</strong> — Official HuggingFace quantizations</li>
+</ul>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+</body>
+</html>
