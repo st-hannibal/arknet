@@ -80,6 +80,20 @@ validator = true</pre>
 <p><strong>Hardware guide:</strong> A Raspberry Pi 5 can run a router. A laptop with an RTX 3060 can serve 7B models. A desktop with an RTX 4090 can serve 27B models. Match the model tier to your VRAM — see <a href="/docs/models.html">Genesis Models</a>.</p>
 </div>
 
+<h2>Networking</h2>
+<p>Your node needs <strong>one public port</strong> — the P2P port (default 26656). Open it in your firewall or router. Everything else stays private.</p>
+<table>
+  <tr><th>Port</th><th>Default</th><th>Public?</th><th>Purpose</th></tr>
+  <tr><td><strong>P2P</strong></td><td>26656</td><td><strong>Yes</strong></td><td>Node discovery, block gossip, inference dispatch. Noise-encrypted.</td></tr>
+  <tr><td><strong>RPC</strong></td><td>26657</td><td>No (localhost)</td><td>Your personal dashboard — balance, explorer, submit transactions.</td></tr>
+  <tr><td><strong>Metrics</strong></td><td>9090</td><td>No (localhost)</td><td>Prometheus scrape endpoint for monitoring.</td></tr>
+</table>
+<p>This is the same as every blockchain node. Bitcoin: port 8333. Ethereum: 30303. Cosmos: 26656. Open the P2P port, the rest is private.</p>
+
+<div class="note">
+<p><strong>Want to run a public gateway?</strong> Change <code>rpc_listen</code> to <code>"0.0.0.0:26657"</code> in <code>node.toml</code>. Users can send inference requests through you and you earn the 5% router cut. This is how community gateways work — just a node with a public RPC.</p>
+</div>
+
 <h2>Verify it's working</h2>
 <pre># Check node health
 curl http://localhost:26657/health
