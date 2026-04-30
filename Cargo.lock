@@ -209,6 +209,7 @@ dependencies = [
  "arknet-common",
  "arknet-crypto",
  "arknet-network",
+ "arknet-payments",
  "arknet-staking",
  "async-trait",
  "blake3",
