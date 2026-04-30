@@ -49,14 +49,10 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
 
     let token = shutdown::install();
 
-    // One keypair per process — both libp2p PeerId derivation and
-    // consensus signing share the same ed25519 seed (see
-    // `validator::ed25519_from_libp2p`).
-    //
-    // Phase 1 Week 7-8: generated fresh every start. Persistence +
-    // load-from-disk at `<data-dir>/keys/node.key` ships with the
-    // operator key management work in Week 9.
-    let keypair = Keypair::generate_ed25519();
+    // Persistent keypair: load from `<data-dir>/keys/node.key` or
+    // generate + save on first boot. The same 32-byte seed drives
+    // both the libp2p PeerId and the consensus signing key.
+    let keypair = load_or_generate_keypair(&root)?;
 
     // Boot the P2P network first so the runtime's RPC layer can
     // reference the handle when answering `/peers`.
@@ -175,6 +171,42 @@ fn print_banner(data_dir: &Path, cfg: &NodeConfig) {
     eprintln!();
 }
 
+/// Load the node's ed25519 keypair from disk, or generate and persist
+/// one on first boot. The key file is `<data-dir>/keys/node.key` (raw
+/// 64-byte ed25519 keypair: 32 secret || 32 public).
+fn load_or_generate_keypair(data_dir: &Path) -> Result<Keypair> {
+    let key_path = paths::keys_dir(data_dir).join("node.key");
+
+    if key_path.exists() {
+        let bytes = std::fs::read(&key_path)
+            .map_err(|e| NodeError::Paths(format!("read {}: {e}", key_path.display())))?;
+        if bytes.len() != 64 {
+            return Err(NodeError::Paths(format!(
+                "node.key has {} bytes, expected 64",
+                bytes.len()
+            )));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&bytes);
+        let ed = arknet_network::identity::ed25519::Keypair::try_from_bytes(&mut arr)
+            .map_err(|e| NodeError::Paths(format!("parse node.key: {e}")))?;
+        info!(path = %key_path.display(), "loaded node keypair from disk");
+        Ok(arknet_network::identity::Keypair::from(ed))
+    } else {
+        let keypair = Keypair::generate_ed25519();
+        let ed = keypair
+            .clone()
+            .try_into_ed25519()
+            .map_err(|e| NodeError::Paths(format!("ed25519 conversion: {e}")))?;
+        std::fs::create_dir_all(key_path.parent().unwrap())
+            .map_err(|e| NodeError::Paths(format!("create keys dir: {e}")))?;
+        std::fs::write(&key_path, ed.to_bytes())
+            .map_err(|e| NodeError::Paths(format!("write {}: {e}", key_path.display())))?;
+        info!(path = %key_path.display(), "generated new node keypair");
+        Ok(keypair)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,5 +214,16 @@ mod tests {
     #[test]
     fn role_parse_from_args() {
         assert_eq!("compute".parse::<Role>().unwrap(), Role::Compute);
+    }
+
+    #[test]
+    fn keypair_persists_across_loads() {
+        let tmp = tempfile::tempdir().unwrap();
+        paths::ensure_layout(tmp.path()).unwrap();
+        let kp1 = load_or_generate_keypair(tmp.path()).unwrap();
+        let kp2 = load_or_generate_keypair(tmp.path()).unwrap();
+        let pk1 = kp1.public().to_peer_id();
+        let pk2 = kp2.public().to_peer_id();
+        assert_eq!(pk1, pk2, "same data dir must produce same PeerId");
     }
 }
