@@ -159,6 +159,38 @@ pub struct OnChainModelManifest {
     pub license: String,
 }
 
+/// Evidence attached to a [`Transaction::Dispute`].
+///
+/// The verifier re-executed `job_id` deterministically, derived its
+/// own `reexec_output_hash`, and found it diverged from the compute
+/// node's `claimed_output_hash` carried on the anchored receipt. The
+/// chain cross-references the `job_id` against the receipt ledger,
+/// and on mismatch routes through [`arknet_staking::apply_slash`]
+/// with [`arknet_staking::Offense::FailedDeterministicVerification`].
+///
+/// `verifier` identifies the submitter; `reexec_proof` is the
+/// verifier's own [`ComputeProof::HashChain`] rebuilt during
+/// re-execution so an external light client can re-check the claim.
+#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub struct Dispute {
+    /// Job under dispute — must match an already-anchored receipt.
+    pub job_id: arknet_common::types::JobId,
+    /// Compute node that signed the disputed receipt (slash target).
+    pub compute_node: NodeId,
+    /// The output hash the receipt claimed.
+    pub claimed_output_hash: Hash256,
+    /// The output hash the verifier derived on re-execution.
+    pub reexec_output_hash: Hash256,
+    /// Verifier's node id.
+    pub verifier: NodeId,
+    /// Verifier's payout address (reporter cut per §10 split).
+    pub reporter: Address,
+    /// VRF proof that this verifier was selected for `job_id`. §11.
+    pub vrf_proof: Vec<u8>,
+    /// Deterministic re-execution hash chain.
+    pub reexec_proof: crate::receipt::ComputeProof,
+}
+
 /// Top-level transaction enum.
 ///
 /// All variants are consensus-relevant. Application logic is implemented
@@ -203,6 +235,15 @@ pub enum Transaction {
         /// Choice.
         choice: VoteChoice,
     },
+    /// Verifier-submitted dispute against an already-anchored receipt.
+    ///
+    /// Triggers slashing on the compute node that produced `output_hash`
+    /// for `job_id` if a re-execution shows it diverged from the
+    /// deterministic ground truth. §11 + §10.
+    ///
+    /// Appended to the enum rather than inserted so the borsh
+    /// discriminants of existing variants remain stable.
+    Dispute(Dispute),
 }
 
 impl Transaction {

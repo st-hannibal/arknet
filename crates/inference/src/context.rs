@@ -136,6 +136,61 @@ impl<'model> Context<'model> {
     }
 }
 
+impl Context<'_> {
+    /// Serialize the full KV-cache + internal state into a byte buffer.
+    ///
+    /// The returned buffer can be fed to [`Self::restore_state`] on a
+    /// context created over the **same model** (same digest) to resume
+    /// inference from the point this snapshot was taken.
+    ///
+    /// # Security
+    ///
+    /// The snapshot contains the full KV cache, which includes the
+    /// user's prompt tokens. Callers must handle the buffer with the
+    /// same confidentiality as the prompt itself. Phase 2 encrypts
+    /// checkpoint blobs with the user's session key.
+    pub fn snapshot_state(&self) -> Result<Vec<u8>> {
+        // SAFETY: pure query — returns the byte budget for the state.
+        let size = unsafe { sys::llama_state_get_size(self.ptr.as_ptr()) };
+        if size == 0 {
+            return Err(InferenceError::Checkpoint("state size is 0".into()));
+        }
+        let mut buf = vec![0u8; size];
+        // SAFETY: `buf` is sized to `llama_state_get_size`; llama.cpp
+        // writes at most `size` bytes. Returns the number of bytes
+        // actually written; a return of 0 indicates failure.
+        let written =
+            unsafe { sys::llama_state_get_data(self.ptr.as_ptr(), buf.as_mut_ptr(), size) };
+        if written == 0 {
+            return Err(InferenceError::Checkpoint(
+                "llama_state_get_data returned 0".into(),
+            ));
+        }
+        buf.truncate(written);
+        Ok(buf)
+    }
+
+    /// Restore internal state from a buffer previously produced by
+    /// [`Self::snapshot_state`].
+    ///
+    /// The context **must** be backed by the same model (same digest)
+    /// that was used when the snapshot was taken — a mismatch will
+    /// produce garbage or crash.
+    pub fn restore_state(&mut self, data: &[u8]) -> Result<()> {
+        // SAFETY: `data` came from `llama_state_get_data` and the
+        // caller guarantees the same model. `llama_state_set_data`
+        // copies at most `data.len()` bytes from `src`.
+        let consumed =
+            unsafe { sys::llama_state_set_data(self.ptr.as_ptr(), data.as_ptr(), data.len()) };
+        if consumed == 0 {
+            return Err(InferenceError::Checkpoint(
+                "llama_state_set_data returned 0".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl Drop for Context<'_> {
     fn drop(&mut self) {
         // SAFETY: we own the pointer, it came from `llama_init_from_model`,

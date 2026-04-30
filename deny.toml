@@ -9,7 +9,30 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+    # === libp2p 0.54 transitive advisories (introduced Week 5-6) ==========
+    #
+    # All of these land via libp2p 0.54's dep tree — libp2p-tls pulls
+    # rustls-webpki 0.101, libp2p-quic pulls ring 0.16, and libp2p-gossipsub
+    # pulls lru 0.12 and paste. The libp2p 0.55 line drops both, but that
+    # bump is a separate chore because it also changes SwarmBuilder and
+    # connection-limit APIs. Ignored here with explicit IDs so re-scans still
+    # flag any NEW advisories surfacing in our dep tree.
+    "RUSTSEC-2025-0009",  # ring 0.16: AES panic on overflow checks
+    "RUSTSEC-2025-0010",  # ring 0.16: unmaintained
+    "RUSTSEC-2026-0098",  # rustls-webpki 0.101: URI name constraints
+    "RUSTSEC-2026-0099",  # rustls-webpki 0.101: wildcard name constraints
+    "RUSTSEC-2026-0104",  # rustls-webpki 0.101: CRL parsing panic
+    "RUSTSEC-2024-0384",  # instant: unmaintained (ring transitive)
+    "RUSTSEC-2024-0436",  # paste: unmaintained (libp2p transitive)
+    "RUSTSEC-2026-0002",  # lru 0.12: IterMut UB (libp2p-gossipsub transitive)
+
+    # === Rust-1.86 toolchain-pinned advisory ==============================
+    # `time >= 0.3.47` requires rustc 1.88. We stay on 1.86 through Phase 1
+    # to keep CI / ops deterministic. The DoS is in formatter-description
+    # parsing, not a code path we exercise.
+    "RUSTSEC-2026-0009",  # time 0.3.41: DoS via stack exhaustion
+]
 
 [licenses]
 version = 2
@@ -20,14 +43,27 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "MPL-2.0",
     "Zlib",
     "CC0-1.0",
     "CDLA-Permissive-2.0",
+    # Triple-license allowance for ring 0.16 (see clarify block below).
+    "OpenSSL",
 ]
 confidence-threshold = 0.8
+
+# ring 0.16 predates the cargo-deny license expression requirement. Its
+# LICENSE file is a hybrid of OpenSSL / ISC / BSD / MIT clauses — all of
+# which we accept — but the crate has no `license` field in Cargo.toml so
+# cargo-deny flags it as unlicensed. ring 0.17 fixed this; we pick it up
+# with the libp2p 0.55 bump.
+[[licenses.clarify]]
+name       = "ring"
+expression = "ISC AND MIT AND OpenSSL"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 },
+]
 
 [bans]
 multiple-versions = "warn"

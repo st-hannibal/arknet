@@ -1,0 +1,28 @@
+# cargo-audit configuration.
+#
+# Mirrors the `[advisories].ignore` list in `deny.toml` — both tools need
+# the same exclusions or CI fails on whichever one we forget. Every ignore
+# here documents why we can't patch and what triggers re-evaluation.
+#
+# When updating this file, update `deny.toml` to match (and vice versa).
+
+[advisories]
+ignore = [
+    # === libp2p 0.54 transitive advisories =================================
+    #
+    # All of these land via libp2p 0.54 (libp2p-tls → rustls-webpki 0.101,
+    # libp2p-quic → ring 0.16, libp2p-gossipsub → lru 0.12). libp2p 0.55
+    # clears most of them but is a separate chore (SwarmBuilder API change).
+    "RUSTSEC-2025-0009",  # ring 0.16: AES panic on overflow checks
+    "RUSTSEC-2025-0010",  # ring 0.16: unmaintained
+    "RUSTSEC-2026-0098",  # rustls-webpki 0.101: URI name constraints
+    "RUSTSEC-2026-0099",  # rustls-webpki 0.101: wildcard name constraints
+    "RUSTSEC-2026-0104",  # rustls-webpki 0.101: CRL parsing panic
+    "RUSTSEC-2024-0384",  # instant: unmaintained (ring transitive)
+    "RUSTSEC-2024-0436",  # paste: unmaintained (libp2p transitive)
+    "RUSTSEC-2026-0002",  # lru 0.12: IterMut UB
+
+    # === Rust-1.86 toolchain-pinned ========================================
+    # time >= 0.3.47 needs rustc 1.88. Pinned to 0.3.41 until Phase 1 exit.
+    "RUSTSEC-2026-0009",  # time 0.3.41: DoS via stack exhaustion
+]

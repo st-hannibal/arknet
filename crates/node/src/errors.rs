@@ -67,4 +67,16 @@ pub enum NodeError {
     /// A request targeted a node feature that Phase 0 doesn't expose.
     #[error("not implemented: {0}")]
     NotImplemented(&'static str),
+
+    /// Networking subsystem failure (transport, handshake, peer book).
+    #[error("network: {0}")]
+    Network(#[from] arknet_network::NetworkError),
+
+    /// Router-role failure (intake, selection, failover).
+    #[error("router: {0}")]
+    Router(#[from] arknet_router::RouterError),
+
+    /// Compute-role failure.
+    #[error("compute: {0}")]
+    Compute(#[from] arknet_compute::ComputeError),
 }

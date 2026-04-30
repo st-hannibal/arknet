@@ -63,6 +63,12 @@ impl MockRegistry {
         }
     }
 
+    /// Construct from an already-materialized [`MockRegistryFile`].
+    /// Used by the genesis seed which holds a richer source format.
+    pub fn from_file(file: MockRegistryFile) -> Self {
+        Self { file }
+    }
+
     /// Number of entries. Mostly useful in tests.
     pub fn len(&self) -> usize {
         self.file.manifests.len()

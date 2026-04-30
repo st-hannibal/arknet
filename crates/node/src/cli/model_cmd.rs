@@ -381,5 +381,9 @@ async fn open_runtime_with_manifest(
         model_manager,
         inference,
         data_dir: root,
+        network: None,
+        consensus: None,
+        router: None,
+        compute: None,
     })
 }

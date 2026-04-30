@@ -101,6 +101,9 @@ argon2               = { version = "=0.5.3", features = ["std"] }
 rocksdb      = { version = "0.22", default-features = false, features = ["snappy"] }
 sled         = "0.34"
 
+# State-root commitment: sparse Merkle tree (CKB-audited, maintained).
+sparse-merkle-tree = { version = "0.6", default-features = false, features = ["std"] }
+
 # HTTP / RPC
 axum         = "0.7"
 tower        = "0.4"
@@ -110,7 +113,7 @@ prost        = "0.13"
 reqwest      = { version = "0.12", features = ["stream", "rustls-tls"] }
 
 # P2P
-libp2p       = { version = "0.54", features = ["tcp", "quic", "noise", "yamux", "gossipsub", "kad", "identify", "ping", "request-response", "tokio", "macros"] }
+libp2p       = { version = "=0.54.1", features = ["tcp", "quic", "noise", "yamux", "gossipsub", "kad", "identify", "ping", "request-response", "tokio", "macros"] }
 
 # Testing
 proptest     = "1.5"

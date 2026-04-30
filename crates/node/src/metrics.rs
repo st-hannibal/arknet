@@ -96,6 +96,37 @@ fn register_common_metrics() {
         "Wall-clock duration of an inference session from start to stop event."
     );
 
+    // Phase-1 Week 12 additions.
+    metrics::describe_gauge!("arknet_consensus_height", "Latest finalized block height.");
+    metrics::describe_gauge!(
+        "arknet_consensus_round",
+        "Current consensus round within the active height."
+    );
+    metrics::describe_gauge!(
+        "arknet_consensus_validator_set_size",
+        "Number of active validators in the current epoch."
+    );
+    metrics::describe_gauge!(
+        "arknet_mempool_depth",
+        "Number of pending transactions in the mempool."
+    );
+    metrics::describe_gauge!(
+        "arknet_mempool_bytes",
+        "Total encoded bytes of pending transactions."
+    );
+    metrics::describe_counter!(
+        "arknet_receipts_anchored_total",
+        "Cumulative count of receipts anchored onto L1."
+    );
+    metrics::describe_counter!(
+        "arknet_disputes_filed_total",
+        "Cumulative count of Dispute transactions accepted by the chain."
+    );
+    metrics::describe_counter!(
+        "arknet_inference_jobs_total",
+        "Total inference jobs dispatched by the router."
+    );
+
     // Stake these as zero so /metrics returns something even before the
     // first event fires.
     metrics::counter!("arknet_node_starts_total").increment(1);
