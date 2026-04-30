@@ -48,6 +48,7 @@ pub use block::{check_block_size, receipt_root, tx_root, Block, BlockHeader, MAX
 pub use bootstrap::{
     in_bootstrap_epoch, BOOTSTRAP_MAX_BLOCKS, BOOTSTRAP_VALIDATOR_TARGET, EPOCH_LENGTH_BLOCKS,
 };
+pub use circuit_breaker::CircuitBreakerState;
 pub use errors::{ChainError, Result};
 pub use escrow_entry::{EscrowEntry, EscrowState, ESCROW_TIMEOUT_BLOCKS};
 pub use fee_market::{next_base_fee, BASE_FEE_MAX_CHANGE_DENOM, MIN_BASE_FEE};

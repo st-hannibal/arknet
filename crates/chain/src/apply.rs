@@ -272,7 +272,16 @@ fn apply_receipt_batch(
     // solves the fair-launch chicken-and-egg problem — compute nodes
     // earn ARK from block emission for serving free-tier requests,
     // bootstrapping the token supply from zero.
-    let in_bootstrap = crate::bootstrap::within_bootstrap_window(height);
+    //
+    // Uses `in_bootstrap_epoch` (both height AND validator-count
+    // gates) so bootstrap emission stops once 100 validators are
+    // active, not just after the 6-month time window.
+    let active_count = ctx
+        .state()
+        .iter_validators()
+        .map(|v| v.len() as u32)
+        .unwrap_or(0);
+    let in_bootstrap = crate::bootstrap::in_bootstrap_epoch(height, active_count);
     if in_bootstrap {
         let epoch = height / crate::bootstrap::EPOCH_LENGTH_BLOCKS;
         let treasury = bootstrap_treasury_address();
@@ -686,16 +695,30 @@ fn apply_gov_proposal(
 
 /// Cast a governance vote. Records the vote keyed by
 /// `(proposal_id, voter)`. Duplicate votes are rejected.
+///
+/// Only accepts votes when the proposal is in the `Voting` phase.
+/// Votes during `Discussion`, `Passed`, `Rejected`, `RejectedWithVeto`,
+/// or `Executed` are rejected.
 fn apply_gov_vote(
     ctx: &mut BlockCtx<'_>,
     proposal_id: u64,
     voter: &Address,
     choice: crate::transactions::VoteChoice,
 ) -> Result<TxOutcome> {
-    // Check proposal exists.
-    if ctx.get_proposal(proposal_id)?.is_none() {
+    // Check proposal exists and decode to verify phase.
+    let raw = match ctx.get_proposal(proposal_id)? {
+        Some(bytes) => bytes,
+        None => {
+            return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "proposal not found",
+            )));
+        }
+    };
+    let record: crate::governance_entry::ProposalRecord =
+        borsh::from_slice(&raw).map_err(|e| ChainError::Codec(format!("proposal decode: {e}")))?;
+    if record.phase != crate::governance_entry::ProposalPhase::Voting {
         return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "proposal not found",
+            "proposal not in voting phase",
         )));
     }
     // Check for duplicate vote.
@@ -805,10 +828,11 @@ fn apply_transfer(
         }));
     }
 
-    // Fee is priced at 1 ark_atom per gas unit during Phase 1. The base fee
-    // curve from `fee_market.rs` becomes the multiplier once the block
-    // builder hands it in (Week 7-8).
-    let total: Amount = match amount.checked_add(fee as Amount) {
+    // EIP-1559: fee cost = gas_budget × base_fee_per_gas. The base fee
+    // is stored in CF_META and updated each block by the commit path.
+    let base_fee = ctx.state().base_fee().unwrap_or(1);
+    let fee_cost = (fee as Amount).saturating_mul(base_fee);
+    let total: Amount = match amount.checked_add(fee_cost) {
         Some(v) => v,
         None => {
             return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {

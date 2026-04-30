@@ -44,6 +44,7 @@ pub struct Router {
     registry: CandidateRegistry,
     quotas: Arc<Mutex<FreeTierTracker>>,
     next_job_salt: Arc<Mutex<u64>>,
+    circuit_breaker: Arc<Mutex<arknet_chain::CircuitBreakerState>>,
 }
 
 impl Router {
@@ -53,7 +54,15 @@ impl Router {
             registry,
             quotas: Arc::new(Mutex::new(quotas)),
             next_job_salt: Arc::new(Mutex::new(0)),
+            circuit_breaker: Arc::new(Mutex::new(arknet_chain::CircuitBreakerState::genesis())),
         }
+    }
+
+    /// Shared circuit breaker handle. The node runtime calls
+    /// `evaluate()` at epoch boundaries; the router checks
+    /// `is_paused()` before accepting jobs.
+    pub fn circuit_breaker(&self) -> &Arc<Mutex<arknet_chain::CircuitBreakerState>> {
+        &self.circuit_breaker
     }
 
     /// Candidate registry (shared handle).
@@ -74,6 +83,12 @@ impl Router {
         now_ms: Timestamp,
         policy: QuotaPolicy,
     ) -> Result<(JobId, RouterStream)> {
+        if self.circuit_breaker.lock().is_paused() {
+            return Err(RouterError::Internal(
+                "inference paused — circuit breaker tripped".into(),
+            ));
+        }
+
         verify_request(&req, now_ms)?;
         let user_addr = req.derived_user_address();
 

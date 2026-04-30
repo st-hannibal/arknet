@@ -208,6 +208,7 @@ dependencies = [
  "arknet-chain",
  "arknet-common",
  "arknet-crypto",
+ "arknet-governance",
  "arknet-network",
  "arknet-payments",
  "arknet-staking",
@@ -432,6 +433,7 @@ dependencies = [
 name = "arknet-router"
 version = "0.1.0"
 dependencies = [
+ "arknet-chain",
  "arknet-common",
  "arknet-compute",
  "arknet-crypto",
