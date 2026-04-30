@@ -45,6 +45,11 @@ pub struct BlockHeader {
     pub validator_set_hash: Hash256,
     /// Current EIP-1559 base fee in ark_atom/gas.
     pub base_fee: Amount,
+    /// Genesis coinbase message. Non-empty only at height 0 — proves
+    /// the chain could not have been pre-mined before the embedded date.
+    /// Analogous to Bitcoin's "The Times 03/Jan/2009..." in block 0.
+    #[serde(default)]
+    pub genesis_message: String,
 }
 
 impl BlockHeader {
@@ -149,6 +154,7 @@ mod tests {
             proposer: NodeId::new([4; 32]),
             validator_set_hash: [5; 32],
             base_fee: 1_000_000_000,
+            genesis_message: String::new(),
         }
     }
 

@@ -78,6 +78,8 @@ pub struct BuildParams {
     pub gas_limit: Gas,
     /// Block body byte budget.
     pub bytes_budget: usize,
+    /// Genesis coinbase message (non-empty only at height 1).
+    pub genesis_message: String,
 }
 
 /// Proposer-side block construction helper.
@@ -143,6 +145,7 @@ impl BlockBuilder {
             proposer: params.proposer,
             validator_set_hash: params.validator_set_hash,
             base_fee: params.base_fee,
+            genesis_message: params.genesis_message,
         };
         let block = Block {
             header,
@@ -215,6 +218,7 @@ mod tests {
             base_fee: 1_000_000_000,
             gas_limit: DEFAULT_BLOCK_GAS_LIMIT,
             bytes_budget: DEFAULT_BLOCK_BYTES_BUDGET,
+            genesis_message: String::new(),
         }
     }
 
