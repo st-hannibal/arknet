@@ -36,6 +36,12 @@
 use arknet_common::types::{Amount, Height};
 
 /// Hard supply cap — 1 billion ARK in ark_atom (9 decimals).
+///
+/// The halving schedule converges to ~795M ARK; the remaining ~205M
+/// is permanently unreachable through emission alone. This is by
+/// design (analogous to Bitcoin's ~20.99M practical maximum).
+/// `try_mint` enforces this cap as an upper bound; the geometric
+/// schedule ensures actual circulating supply never reaches it.
 pub const TOTAL_SUPPLY_CAP: Amount = 1_000_000_000 * ATOMS_PER_ARK;
 
 /// 1 ARK = 10^9 ark_atom.

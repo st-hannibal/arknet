@@ -27,8 +27,9 @@ use serde::{Deserialize, Serialize};
 use crate::errors::{PaymentError, Result};
 
 /// Blocks before an unsettled escrow is automatically refundable
-/// (§16: 5 minutes at 1s blocks = 300 blocks).
-pub const ESCROW_TIMEOUT_BLOCKS: Height = 300;
+/// (2 hours at 1s blocks). Must exceed verification + dispute
+/// window so settlement lands before the refund path.
+pub const ESCROW_TIMEOUT_BLOCKS: Height = 7_200;
 
 /// Gas charged for an escrow lock operation.
 pub const ESCROW_LOCK_GAS: u64 = 50_000;
@@ -211,9 +212,9 @@ mod tests {
             height: 100,
         });
         assert!(!e.is_refundable(100));
-        assert!(!e.is_refundable(399));
-        assert!(e.is_refundable(400));
-        assert!(e.is_refundable(999));
+        assert!(!e.is_refundable(7_299));
+        assert!(e.is_refundable(7_300));
+        assert!(e.is_refundable(99_999));
     }
 
     #[test]

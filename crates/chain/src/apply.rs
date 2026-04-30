@@ -362,8 +362,9 @@ fn apply_escrow_lock(
     })
 }
 
-/// Settle a locked escrow — distribute funds via the 75/7/5/5/3/5
-/// reward split.
+/// Settle a locked escrow. Distributes the user payment via the
+/// 75/7/5/5/3/5 split immediately, and queues a pending reward for
+/// the block-emission component (minted at the next epoch boundary).
 #[allow(clippy::too_many_arguments)]
 fn apply_escrow_settle(
     ctx: &mut BlockCtx<'_>,
@@ -372,7 +373,7 @@ fn apply_escrow_settle(
     verifier_addr: &Address,
     router_addr: &Address,
     treasury_addr: &Address,
-    _height: Height,
+    height: Height,
 ) -> Result<TxOutcome> {
     let raw = match ctx.get_escrow(job_id)? {
         Some(b) => b,
@@ -391,7 +392,7 @@ fn apply_escrow_settle(
         )));
     }
 
-    // Settle: distribute the escrowed amount using the 75/7/5/5/3/5 split.
+    // Phase 1: distribute the user payment portion immediately.
     credit_reward_split(
         ctx,
         entry.amount,
@@ -400,6 +401,24 @@ fn apply_escrow_settle(
         router_addr,
         treasury_addr,
     )?;
+
+    // Queue the block-emission reward for epoch-boundary minting.
+    // The exact per-token rate is computed at the epoch boundary once
+    // total_tokens for the epoch is known (two-phase settlement).
+    let epoch = height / crate::bootstrap::EPOCH_LENGTH_BLOCKS;
+    let pending = crate::pending_reward::PendingReward {
+        job_id: *job_id,
+        output_tokens: 0, // filled from receipt at settlement
+        user_payment: entry.amount,
+        epoch,
+        compute_addr: *compute_addr,
+        verifier_addr: *verifier_addr,
+        router_addr: *router_addr,
+        treasury_addr: *treasury_addr,
+    };
+    let pr_bytes = borsh::to_vec(&pending)
+        .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
+    ctx.set_pending_reward(job_id, &pr_bytes)?;
 
     entry.state = crate::escrow_entry::EscrowState::Settled;
     let bytes =

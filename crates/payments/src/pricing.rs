@@ -33,11 +33,18 @@ pub const PRICE_FLOOR: Amount = 0;
 /// Governance-adjustable.
 pub const PRICE_CEILING: Amount = 10_000_000;
 
-/// EMA weight for current price (70%, scaled ×10_000).
-pub const EMA_CURRENT_WEIGHT: u64 = 7_000;
-
-/// EMA weight for new observation (30%, scaled ×10_000).
-pub const EMA_NEW_WEIGHT: u64 = 3_000;
+/// EMA weight for current price at stable demand (70%, scaled ×10_000).
+pub const EMA_CURRENT_WEIGHT_STABLE: u64 = 7_000;
+/// EMA weight for new observation at stable demand.
+pub const EMA_NEW_WEIGHT_STABLE: u64 = 3_000;
+/// EMA weight at moderate demand change (>20%).
+pub const EMA_CURRENT_WEIGHT_MODERATE: u64 = 6_000;
+/// EMA weight at moderate demand change.
+pub const EMA_NEW_WEIGHT_MODERATE: u64 = 4_000;
+/// EMA weight at large demand spike (>50%).
+pub const EMA_CURRENT_WEIGHT_FAST: u64 = 5_000;
+/// EMA weight at large demand spike.
+pub const EMA_NEW_WEIGHT_FAST: u64 = 5_000;
 
 /// Oracle state. Stored in `CF_META` under key `pricing_state`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,7 +95,8 @@ impl PricingState {
         }
         let util = self.utilization_scaled();
         let raw_price = compute_raw_price(GENESIS_BASE_PRICE, util);
-        self.price = ema_smooth(self.price, raw_price);
+        let (w_current, w_new) = adaptive_ema_weights(self.price, raw_price);
+        self.price = ema_smooth_weighted(self.price, raw_price, w_current, w_new);
         self.price = self.price.clamp(PRICE_FLOOR, PRICE_CEILING);
         self.epoch = new_epoch;
         self.epoch_jobs = 0;
@@ -127,10 +135,33 @@ fn compute_raw_price(base_price: Amount, util_scaled: u128) -> Amount {
     numerator / denominator
 }
 
-/// EMA: `0.7 × current + 0.3 × new`.
-fn ema_smooth(current: Amount, new: Amount) -> Amount {
-    let c = current * EMA_CURRENT_WEIGHT as u128;
-    let n = new * EMA_NEW_WEIGHT as u128;
+/// Adaptive EMA: weights depend on the magnitude of the price change.
+/// Large demand spikes (>50% change) converge in ~2 epochs; stable
+/// conditions maintain a smoother signal.
+fn adaptive_ema_weights(current: Amount, new: Amount) -> (u64, u64) {
+    if current == 0 {
+        return (EMA_CURRENT_WEIGHT_FAST, EMA_NEW_WEIGHT_FAST);
+    }
+    let delta = if new > current {
+        new - current
+    } else {
+        current - new
+    };
+    let change_pct = delta * 10_000 / current;
+    if change_pct > 5_000 {
+        (EMA_CURRENT_WEIGHT_FAST, EMA_NEW_WEIGHT_FAST)
+    } else if change_pct > 2_000 {
+        (EMA_CURRENT_WEIGHT_MODERATE, EMA_NEW_WEIGHT_MODERATE)
+    } else {
+        (EMA_CURRENT_WEIGHT_STABLE, EMA_NEW_WEIGHT_STABLE)
+    }
+}
+
+/// Weighted EMA: `w_current × current + w_new × new`, where weights
+/// sum to 10_000.
+fn ema_smooth_weighted(current: Amount, new: Amount, w_current: u64, w_new: u64) -> Amount {
+    let c = current * w_current as u128;
+    let n = new * w_new as u128;
     (c + n) / 10_000
 }
 
@@ -183,18 +214,39 @@ mod tests {
     }
 
     #[test]
-    fn ema_weights_sum_correctly() {
-        // If current == new, result should be the same value.
-        let result = ema_smooth(1_000, 1_000);
+    fn ema_stable_preserves_value() {
+        let result = ema_smooth_weighted(1_000, 1_000, 7_000, 3_000);
         assert_eq!(result, 1_000);
     }
 
     #[test]
-    fn ema_moves_toward_new() {
-        let result = ema_smooth(1_000, 2_000);
-        assert!(result > 1_000 && result < 2_000);
-        // Should be 0.7*1000 + 0.3*2000 = 1300
+    fn ema_stable_moves_toward_new() {
+        let result = ema_smooth_weighted(1_000, 2_000, 7_000, 3_000);
         assert_eq!(result, 1_300);
+    }
+
+    #[test]
+    fn adaptive_weights_fast_on_large_spike() {
+        let (wc, wn) = adaptive_ema_weights(1_000, 2_000);
+        // 100% change > 50% → fast weights
+        assert_eq!(wc, EMA_CURRENT_WEIGHT_FAST);
+        assert_eq!(wn, EMA_NEW_WEIGHT_FAST);
+    }
+
+    #[test]
+    fn adaptive_weights_stable_on_small_change() {
+        let (wc, wn) = adaptive_ema_weights(1_000, 1_100);
+        // 10% change → stable weights
+        assert_eq!(wc, EMA_CURRENT_WEIGHT_STABLE);
+        assert_eq!(wn, EMA_NEW_WEIGHT_STABLE);
+    }
+
+    #[test]
+    fn adaptive_weights_moderate_on_mid_change() {
+        let (wc, wn) = adaptive_ema_weights(1_000, 1_400);
+        // 40% change → moderate weights
+        assert_eq!(wc, EMA_CURRENT_WEIGHT_MODERATE);
+        assert_eq!(wn, EMA_NEW_WEIGHT_MODERATE);
     }
 
     #[test]

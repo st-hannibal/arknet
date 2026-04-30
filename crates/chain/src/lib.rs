@@ -31,6 +31,7 @@ pub mod escrow_entry;
 pub mod fee_market;
 pub mod genesis;
 pub mod governance_entry;
+pub mod pending_reward;
 pub mod receipt;
 pub mod stake_apply;
 pub mod stake_entry;
@@ -49,6 +50,7 @@ pub use errors::{ChainError, Result};
 pub use escrow_entry::{EscrowEntry, EscrowState, ESCROW_TIMEOUT_BLOCKS};
 pub use fee_market::{next_base_fee, BASE_FEE_MAX_CHANGE_DENOM, MIN_BASE_FEE};
 pub use genesis::{load_genesis, GenesisConfig, GenesisParams, GenesisValidator};
+pub use pending_reward::PendingReward;
 pub use receipt::{
     ComputeProof, DaLayer, DaReference, InferenceReceipt, Quantization, ReceiptBatch,
     TeeAttestation, MAX_RECEIPT_BATCH_BYTES, MAX_RECEIPT_BYTES, RECEIPT_BATCH_MAX,

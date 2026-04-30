@@ -17,8 +17,12 @@
 //! one clean epoch (no trigger fires). A governance emergency
 //! proposal (1h vote, no discussion) can force an override.
 
-/// Verification failure threshold (>50%, ×10_000 BPS).
+/// Verification failure threshold post-bootstrap (>50%, ×10_000 BPS).
 pub const VERIFICATION_FAILURE_THRESHOLD_BPS: u64 = 5_000;
+
+/// During bootstrap: trip at >20% to compensate for zero economic
+/// security (nobody has stake to lose yet).
+pub const BOOTSTRAP_VERIFICATION_FAILURE_THRESHOLD_BPS: u64 = 2_000;
 
 /// Maximum consecutive missed blocks before counting a validator.
 pub const CONSECUTIVE_MISS_THRESHOLD: u64 = 10;
@@ -50,6 +54,11 @@ pub struct CircuitBreakerState {
     pub epoch_bonded_supply: u128,
     /// Amount slashed this epoch.
     pub epoch_slashed: u128,
+    /// `true` during the bootstrap epoch — uses tighter thresholds.
+    pub in_bootstrap: bool,
+    /// Guardian halt — founder emergency stop during bootstrap.
+    /// Self-destructs when `in_bootstrap` transitions to `false`.
+    pub guardian_halted: bool,
 }
 
 impl CircuitBreakerState {
@@ -64,12 +73,33 @@ impl CircuitBreakerState {
             epoch_failed: 0,
             epoch_bonded_supply: 0,
             epoch_slashed: 0,
+            in_bootstrap: true,
+            guardian_halted: false,
         }
     }
 
     /// `true` if new inference jobs should be rejected.
     pub fn is_paused(&self) -> bool {
-        self.tripped && !self.governance_override
+        self.guardian_halted || (self.tripped && !self.governance_override)
+    }
+
+    /// Guardian emergency halt (bootstrap only).
+    pub fn guardian_halt(&mut self) {
+        if self.in_bootstrap {
+            self.guardian_halted = true;
+            tracing::warn!("guardian halt — L2 intake paused by founder key");
+        }
+    }
+
+    /// Guardian resume.
+    pub fn guardian_resume(&mut self) {
+        self.guardian_halted = false;
+    }
+
+    /// Transition out of bootstrap. Clears guardian powers.
+    pub fn end_bootstrap(&mut self) {
+        self.in_bootstrap = false;
+        self.guardian_halted = false;
     }
 
     /// Record a verified receipt.
@@ -91,8 +121,13 @@ impl CircuitBreakerState {
     pub fn evaluate(&mut self, current_epoch: u64, _missing_validators: u64) {
         let total_receipts = self.epoch_verified.saturating_add(self.epoch_failed);
 
-        let trigger1 = total_receipts > 0
-            && self.epoch_failed * 10_000 / total_receipts > VERIFICATION_FAILURE_THRESHOLD_BPS;
+        let vf_threshold = if self.in_bootstrap {
+            BOOTSTRAP_VERIFICATION_FAILURE_THRESHOLD_BPS
+        } else {
+            VERIFICATION_FAILURE_THRESHOLD_BPS
+        };
+        let trigger1 =
+            total_receipts > 0 && self.epoch_failed * 10_000 / total_receipts > vf_threshold;
 
         let trigger2 = _missing_validators > MISSING_VALIDATORS_THRESHOLD;
 

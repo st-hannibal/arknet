@@ -54,6 +54,9 @@ const CF_UNBONDINGS: &str = "unbondings";
 const CF_RECEIPTS_SEEN: &str = "receipts_seen";
 /// Escrow entries keyed by `job_id` (32 bytes).
 const CF_ESCROWS: &str = "escrows";
+/// Pending rewards awaiting epoch-boundary minting.
+/// Key: `job_id` (32 bytes), value: borsh `PendingReward`.
+const CF_PENDING_REWARDS: &str = "pending_rewards";
 /// Governance proposals keyed by `proposal_id` (u64 BE).
 const CF_PROPOSALS: &str = "proposals";
 /// Governance votes keyed by `proposal_id(8) || voter(20)`.
@@ -174,6 +177,7 @@ impl State {
             CF_UNBONDINGS,
             CF_RECEIPTS_SEEN,
             CF_ESCROWS,
+            CF_PENDING_REWARDS,
             CF_PROPOSALS,
             CF_VOTES,
         ]
@@ -396,6 +400,26 @@ impl State {
                 Ok(u64::from_be_bytes(arr))
             }
         }
+    }
+
+    /// Iterate all pending rewards for the given epoch. Used at
+    /// epoch boundary to compute the exact per-token rate and mint.
+    pub fn iter_pending_rewards_for_epoch(
+        &self,
+        target_epoch: u64,
+    ) -> Result<Vec<crate::pending_reward::PendingReward>> {
+        let cf = self.cf(CF_PENDING_REWARDS)?;
+        let mut out = Vec::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for kv in iter {
+            let (_, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter: {e}")))?;
+            let pr: crate::pending_reward::PendingReward = borsh::from_slice(&v)
+                .map_err(|e| ChainError::Codec(format!("pending_reward decode: {e}")))?;
+            if pr.epoch == target_epoch {
+                out.push(pr);
+            }
+        }
+        Ok(out)
     }
 
     /// Read the next proposal id counter.
@@ -669,6 +693,20 @@ impl BlockCtx<'_> {
     /// Delete an escrow entry (after settle or refund).
     pub fn delete_escrow(&mut self, job_id: &JobId) -> Result<()> {
         let cf = self.state.cf(CF_ESCROWS)?;
+        self.batch.delete_cf(cf, job_id.0);
+        Ok(())
+    }
+
+    /// Write a pending reward entry.
+    pub fn set_pending_reward(&mut self, job_id: &JobId, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_PENDING_REWARDS)?;
+        self.batch.put_cf(cf, job_id.0, data);
+        Ok(())
+    }
+
+    /// Delete a pending reward entry (after minting).
+    pub fn delete_pending_reward(&mut self, job_id: &JobId) -> Result<()> {
+        let cf = self.state.cf(CF_PENDING_REWARDS)?;
         self.batch.delete_cf(cf, job_id.0);
         Ok(())
     }

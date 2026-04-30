@@ -36,5 +36,8 @@ pub enum EscrowState {
     Refunded,
 }
 
-/// Blocks before an unsettled escrow is automatically refundable.
-pub const ESCROW_TIMEOUT_BLOCKS: Height = 300;
+/// Blocks before an unsettled escrow is automatically refundable
+/// (2 hours at 1s blocks). Must exceed the verification window
+/// (60 min) + dispute window (60 min) so settlement has time to
+/// land before the refund path activates.
+pub const ESCROW_TIMEOUT_BLOCKS: Height = 7_200;

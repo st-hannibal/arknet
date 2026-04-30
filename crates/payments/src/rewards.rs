@@ -26,7 +26,13 @@ pub const DELEGATOR_PERCENT: u128 = 5;
 
 /// Model size multiplier (×10_000 fixed-point).
 ///
-/// `size_mult(7B) = 10_000` (= 1.0×). See TOKENOMICS §4 table.
+/// `size_mult(7B) = 10_000` (= 1.0×). The curve tracks hardware
+/// cost within a ~2× band: a 70B model is ~12× more expensive to
+/// serve than a 7B (VRAM, power, opportunity cost), and the
+/// multiplier gives 4×. The gap is covered by user payments, which
+/// scale with output quality — users pay more for larger models.
+/// The multiplier ensures block rewards don't penalize operators
+/// who invest in expensive hardware.
 pub fn size_mult(param_billions: u64) -> u64 {
     match param_billions {
         0..=7 => 10_000,   // 1.0×
