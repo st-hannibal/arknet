@@ -89,6 +89,7 @@ pub async fn serve(bind: SocketAddr, state: RpcState, shutdown: CancellationToke
         .route("/v1/models/load", post(load_model))
         .route("/v1/inference", post(infer))
         .route("/v1/status", get(status))
+        .route("/v1/account/:address", get(get_account))
         .route("/v1/tx", post(submit_tx))
         .with_state(state);
 
@@ -643,6 +644,70 @@ async fn status(State(state): State<RpcState>) -> Json<StatusResponse> {
         peer_count,
         consensus_running: state.runtime.consensus.is_some(),
     })
+}
+
+// ─── /v1/account/:address ────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct AccountResponse {
+    address: String,
+    balance: u128,
+    nonce: u64,
+}
+
+async fn get_account(
+    State(state): State<RpcState>,
+    axum::extract::Path(address): axum::extract::Path<String>,
+) -> std::result::Result<Json<AccountResponse>, (StatusCode, Json<ErrorBody>)> {
+    let clean = address.strip_prefix("0x").unwrap_or(&address);
+    let addr_bytes: [u8; 20] = hex::decode(clean)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorBody {
+                    error: format!("bad address hex: {e}"),
+                }),
+            )
+        })?
+        .try_into()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorBody {
+                    error: "address must be 20 bytes (40 hex chars)".into(),
+                }),
+            )
+        })?;
+
+    let Some(consensus) = state.runtime.consensus.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                error: "consensus not running — cannot query state".into(),
+            }),
+        ));
+    };
+
+    let addr = arknet_common::types::Address::new(addr_bytes);
+    match consensus.get_account(&addr).await {
+        Ok(Some(acct)) => Ok(Json(AccountResponse {
+            address: format!("0x{clean}"),
+            balance: acct.balance,
+            nonce: acct.nonce,
+        })),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorBody {
+                error: format!("account 0x{clean} not found"),
+            }),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorBody {
+                error: format!("state query failed: {e}"),
+            }),
+        )),
+    }
 }
 
 // ─── /v1/tx ──────────────────────────────────────────────────────────

@@ -376,6 +376,7 @@ dependencies = [
  "bytes",
  "clap",
  "dirs",
+ "ed25519-dalek",
  "figment",
  "futures",
  "hex",

@@ -16,6 +16,7 @@ pub mod init;
 pub mod model_cmd;
 pub mod start;
 pub mod status;
+pub mod wallet;
 
 /// Top-level arguments shared across every subcommand.
 #[derive(Parser, Debug)]
@@ -84,6 +85,10 @@ pub enum Command {
     /// Drive the model-manager + inference engine from the CLI.
     #[command(subcommand)]
     Model(model_cmd::ModelCmd),
+
+    /// Wallet — create keys, check balance, send ARK.
+    #[command(subcommand)]
+    Wallet(wallet::WalletCmd),
 }
 
 /// Dispatch a parsed [`Cli`] to the matching handler.
@@ -95,5 +100,6 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::Health(args) => health::run(args, cli.data_dir.as_deref()).await,
         Command::Config(cmd) => config_cmd::run(cmd, cli.data_dir.as_deref()).await,
         Command::Model(cmd) => model_cmd::run(cmd, cli.data_dir.as_deref()).await,
+        Command::Wallet(cmd) => wallet::run(cmd, cli.data_dir.as_deref()).await,
     }
 }

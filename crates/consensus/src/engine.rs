@@ -174,6 +174,7 @@ enum Command {
 pub struct ConsensusHandle {
     tx: mpsc::Sender<Command>,
     block_events: tokio::sync::broadcast::Sender<Arc<Block>>,
+    chain_state: Arc<ChainState>,
 }
 
 impl ConsensusHandle {
@@ -202,6 +203,17 @@ impl ConsensusHandle {
             .await
             .map_err(|e| format!("engine task exited: {e}"))?;
         rx.await.map_err(|e| format!("engine reply lost: {e}"))
+    }
+
+    /// Read an account from committed chain state (no channel needed —
+    /// RocksDB reads are safe from any thread).
+    pub async fn get_account(
+        &self,
+        addr: &arknet_common::types::Address,
+    ) -> std::result::Result<Option<arknet_chain::account::Account>, String> {
+        self.chain_state
+            .get_account(addr)
+            .map_err(|e| format!("chain state read: {e}"))
     }
 
     /// Wait for the next finalized block. Returns an `Arc<Block>` so
@@ -234,6 +246,7 @@ impl ConsensusEngine {
         let handle = ConsensusHandle {
             tx: cmd_tx,
             block_events: block_tx.clone(),
+            chain_state: chain_state.clone(),
         };
         let join = tokio::spawn(run(
             cfg,

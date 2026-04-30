@@ -44,6 +44,11 @@ pub struct GenesisConfig {
     /// the chain was not pre-mined before this date.
     #[serde(default)]
     pub genesis_message: String,
+    /// Models seeded at genesis (no deposit required). Populated into
+    /// `CF_MODELS` at chain init so compute nodes can serve them
+    /// immediately without `RegisterModel` transactions.
+    #[serde(default)]
+    pub models: Vec<GenesisModel>,
 }
 
 /// Entry in the hardcoded initial validator set.
@@ -99,6 +104,23 @@ impl GenesisParams {
     pub fn base_fee_amount(&self) -> Amount {
         self.base_fee as Amount
     }
+}
+
+/// A model entry seeded at genesis — no deposit required.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GenesisModel {
+    /// Canonical model identifier (e.g. `"meta-llama/Llama-3.1-8B-Instruct"`).
+    pub model_id: String,
+    /// SHA-256 hex digest of the GGUF artifact.
+    pub sha256_hex: String,
+    /// Size in bytes.
+    pub size_bytes: u64,
+    /// Mirror URL(s) for download.
+    #[serde(default)]
+    pub mirrors: Vec<String>,
+    /// SPDX license.
+    #[serde(default)]
+    pub license: String,
 }
 
 impl Default for GenesisParams {
@@ -181,6 +203,33 @@ pub fn genesis_to_validator_info(gv: &GenesisValidator) -> Result<ValidatorInfo>
         is_genesis: true,
         jailed: false,
     })
+}
+
+/// Seed genesis models into `CF_MODELS` via a block context.
+/// Called once during chain init (first validator boot).
+pub fn seed_genesis_models(
+    ctx: &mut crate::state::BlockCtx<'_>,
+    models: &[GenesisModel],
+) -> Result<()> {
+    for gm in models {
+        let sha256_clean = gm.sha256_hex.strip_prefix("0x").unwrap_or(&gm.sha256_hex);
+        let sha256_bytes: [u8; 32] = hex::decode(sha256_clean)
+            .map_err(|e| ChainError::Codec(format!("model sha256 hex: {e}")))?
+            .try_into()
+            .map_err(|_| ChainError::Codec("model sha256 must be 32 bytes".into()))?;
+
+        let manifest = crate::transactions::OnChainModelManifest {
+            model_id: gm.model_id.clone(),
+            sha256: sha256_bytes,
+            size_bytes: gm.size_bytes,
+            mirrors: gm.mirrors.clone(),
+            license: gm.license.clone(),
+        };
+        let bytes = borsh::to_vec(&manifest)
+            .map_err(|e| ChainError::Codec(format!("model encode: {e}")))?;
+        ctx.set_model(&gm.model_id, &bytes)?;
+    }
+    Ok(())
 }
 
 fn decode_pubkey(hex_s: &str) -> Result<PubKey> {
