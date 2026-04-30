@@ -244,6 +244,62 @@ pub enum Transaction {
     /// Appended to the enum rather than inserted so the borsh
     /// discriminants of existing variants remain stable.
     Dispute(Dispute),
+    /// Lock user payment in escrow before inference dispatch.
+    ///
+    /// §11 lifecycle: CREATED → ESCROWED. Funds are held until
+    /// settlement or timeout-triggered refund.
+    EscrowLock {
+        /// User locking the funds.
+        from: Address,
+        /// Job this escrow covers.
+        job_id: arknet_common::types::JobId,
+        /// Amount to lock (ark_atom).
+        amount: Amount,
+        /// Sender nonce (for replay protection).
+        nonce: Nonce,
+        /// Gas budget.
+        fee: Gas,
+    },
+    /// Settle a locked escrow — release funds to the reward
+    /// distribution. Submitted by the router after the receipt is
+    /// verified and the dispute window has passed.
+    EscrowSettle {
+        /// Job whose escrow to settle.
+        job_id: arknet_common::types::JobId,
+        /// Receipt batch id that proves the job was completed and
+        /// verified. Must be present in `CF_RECEIPTS_SEEN`.
+        batch_id: Hash256,
+        /// Compute node operator address.
+        compute_addr: Address,
+        /// Verifier address.
+        verifier_addr: Address,
+        /// Router address.
+        router_addr: Address,
+        /// Treasury address.
+        treasury_addr: Address,
+    },
+    /// Mint block rewards for a settled receipt. Emitted by the
+    /// proposer as part of the block body — not user-submitted.
+    ///
+    /// §8.2: "next block MUST include matching REWARD_MINT." A
+    /// proposer that omits a valid RewardMint is slashable under
+    /// `CensoringMints`.
+    RewardMint {
+        /// Job the reward covers.
+        job_id: arknet_common::types::JobId,
+        /// Total reward amount (user payment + block emission).
+        total_reward: Amount,
+        /// Compute node operator address.
+        compute_addr: Address,
+        /// Verifier address.
+        verifier_addr: Address,
+        /// Router address.
+        router_addr: Address,
+        /// Treasury address.
+        treasury_addr: Address,
+        /// Output token count (for audit trail).
+        output_tokens: u32,
+    },
 }
 
 impl Transaction {

@@ -5,10 +5,16 @@ edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
 repository    = { workspace = true }
-description   = "Escrow and payment channels for streaming micro-payments."
+description   = "Escrow, reward distribution, emission schedule, and payment channels."
 
 [dependencies]
 arknet-common = { workspace = true }
 arknet-crypto = { workspace = true }
 arknet-chain  = { workspace = true }
+borsh         = { workspace = true }
+serde         = { workspace = true }
 thiserror     = { workspace = true }
+tracing       = { workspace = true }
+
+[dev-dependencies]
+tempfile      = "3.10"

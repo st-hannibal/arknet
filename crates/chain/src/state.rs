@@ -52,6 +52,18 @@ const CF_UNBONDINGS: &str = "unbondings";
 /// landed at. `Transaction::ReceiptBatch` rejects any receipt whose
 /// `job_id` is already present — §6's "seen exactly once" invariant.
 const CF_RECEIPTS_SEEN: &str = "receipts_seen";
+/// Escrow entries keyed by `job_id` (32 bytes).
+const CF_ESCROWS: &str = "escrows";
+/// Pending rewards awaiting epoch-boundary minting.
+/// Key: `job_id` (32 bytes), value: borsh `PendingReward`.
+const CF_PENDING_REWARDS: &str = "pending_rewards";
+/// Governance proposals keyed by `proposal_id` (u64 BE).
+const CF_PROPOSALS: &str = "proposals";
+/// Governance votes keyed by `proposal_id(8) || voter(20)`.
+const CF_VOTES: &str = "votes";
+/// On-chain model registry keyed by `model_id` (UTF-8 string bytes).
+/// Value: borsh-encoded `OnChainModelManifest`.
+const CF_MODELS: &str = "models";
 
 // ─── Value wrapper for SMT account leaves ─────────────────────────────────
 
@@ -167,6 +179,11 @@ impl State {
             CF_META,
             CF_UNBONDINGS,
             CF_RECEIPTS_SEEN,
+            CF_ESCROWS,
+            CF_PENDING_REWARDS,
+            CF_PROPOSALS,
+            CF_VOTES,
+            CF_MODELS,
         ]
         .iter()
         .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
@@ -387,6 +404,80 @@ impl State {
                 Ok(u64::from_be_bytes(arr))
             }
         }
+    }
+
+    /// Iterate all pending rewards for the given epoch. Used at
+    /// epoch boundary to compute the exact per-token rate and mint.
+    pub fn iter_pending_rewards_for_epoch(
+        &self,
+        target_epoch: u64,
+    ) -> Result<Vec<crate::pending_reward::PendingReward>> {
+        let cf = self.cf(CF_PENDING_REWARDS)?;
+        let mut out = Vec::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for kv in iter {
+            let (_, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter: {e}")))?;
+            let pr: crate::pending_reward::PendingReward = borsh::from_slice(&v)
+                .map_err(|e| ChainError::Codec(format!("pending_reward decode: {e}")))?;
+            if pr.epoch == target_epoch {
+                out.push(pr);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Read the next proposal id counter.
+    pub fn next_proposal_id(&self) -> Result<u64> {
+        let cf = self.cf(CF_META)?;
+        match self
+            .db
+            .get_cf(cf, b"next_proposal_id")
+            .map_err(|e| ChainError::Codec(format!("rocksdb get: {e}")))?
+        {
+            None => Ok(0),
+            Some(bytes) => {
+                if bytes.len() != 8 {
+                    return Err(ChainError::Codec("next_proposal_id invalid length".into()));
+                }
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&bytes);
+                Ok(u64::from_be_bytes(arr))
+            }
+        }
+    }
+
+    /// Look up a registered model by `model_id` string.
+    pub fn get_model(
+        &self,
+        model_id: &str,
+    ) -> Result<Option<crate::transactions::OnChainModelManifest>> {
+        let cf = self.cf(CF_MODELS)?;
+        match self
+            .db
+            .get_cf(cf, model_id.as_bytes())
+            .map_err(|e| ChainError::Codec(format!("rocksdb get model: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => {
+                let m: crate::transactions::OnChainModelManifest = borsh::from_slice(&bytes)
+                    .map_err(|e| ChainError::Codec(format!("model decode: {e}")))?;
+                Ok(Some(m))
+            }
+        }
+    }
+
+    /// Iterate every registered model. Used by the `/v1/models`
+    /// endpoint and the router's candidate scoring.
+    pub fn iter_models(&self) -> Result<Vec<crate::transactions::OnChainModelManifest>> {
+        let cf = self.cf(CF_MODELS)?;
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (_, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter models: {e}")))?;
+            let m: crate::transactions::OnChainModelManifest = borsh::from_slice(&v)
+                .map_err(|e| ChainError::Codec(format!("model decode: {e}")))?;
+            out.push(m);
+        }
+        Ok(out)
     }
 
     /// `true` if a receipt for `job_id` was already anchored in a
@@ -614,6 +705,119 @@ impl BlockCtx<'_> {
         self.batch.put_cf(cf, job_id.0, height.to_be_bytes());
         self.receipt_seen_overlay.insert(job_id.0, height);
         Ok(())
+    }
+
+    /// Read an escrow entry by job id.
+    pub fn get_escrow(&self, job_id: &JobId) -> Result<Option<Vec<u8>>> {
+        let cf = self.state.cf(CF_ESCROWS)?;
+        match self
+            .state
+            .db
+            .get_cf(cf, job_id.0)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get escrow: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+        }
+    }
+
+    /// Write an escrow entry.
+    pub fn set_escrow(&mut self, job_id: &JobId, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_ESCROWS)?;
+        self.batch.put_cf(cf, job_id.0, data);
+        Ok(())
+    }
+
+    /// Delete an escrow entry (after settle or refund).
+    pub fn delete_escrow(&mut self, job_id: &JobId) -> Result<()> {
+        let cf = self.state.cf(CF_ESCROWS)?;
+        self.batch.delete_cf(cf, job_id.0);
+        Ok(())
+    }
+
+    /// Write a pending reward entry.
+    pub fn set_pending_reward(&mut self, job_id: &JobId, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_PENDING_REWARDS)?;
+        self.batch.put_cf(cf, job_id.0, data);
+        Ok(())
+    }
+
+    /// Delete a pending reward entry (after minting).
+    pub fn delete_pending_reward(&mut self, job_id: &JobId) -> Result<()> {
+        let cf = self.state.cf(CF_PENDING_REWARDS)?;
+        self.batch.delete_cf(cf, job_id.0);
+        Ok(())
+    }
+
+    /// Read a proposal record by id.
+    pub fn get_proposal(&self, id: u64) -> Result<Option<Vec<u8>>> {
+        let cf = self.state.cf(CF_PROPOSALS)?;
+        match self
+            .state
+            .db
+            .get_cf(cf, id.to_be_bytes())
+            .map_err(|e| ChainError::Codec(format!("rocksdb get proposal: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+        }
+    }
+
+    /// Write a proposal record.
+    pub fn set_proposal(&mut self, id: u64, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_PROPOSALS)?;
+        self.batch.put_cf(cf, id.to_be_bytes(), data);
+        Ok(())
+    }
+
+    /// Read a vote record.
+    pub fn get_vote(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let cf = self.state.cf(CF_VOTES)?;
+        match self
+            .state
+            .db
+            .get_cf(cf, key)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get vote: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+        }
+    }
+
+    /// Write a vote record.
+    pub fn set_vote(&mut self, key: &[u8], data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_VOTES)?;
+        self.batch.put_cf(cf, key, data);
+        Ok(())
+    }
+
+    /// Write the next proposal id counter.
+    pub fn set_next_proposal_id(&mut self, next: u64) -> Result<()> {
+        let cf = self.state.cf(CF_META)?;
+        self.batch
+            .put_cf(cf, b"next_proposal_id", next.to_be_bytes());
+        Ok(())
+    }
+
+    /// Write a model registry entry.
+    pub fn set_model(&mut self, model_id: &str, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_MODELS)?;
+        self.batch.put_cf(cf, model_id.as_bytes(), data);
+        Ok(())
+    }
+
+    /// Check if a model is already registered (committed state only).
+    pub fn get_model(&self, model_id: &str) -> Result<Option<Vec<u8>>> {
+        let cf = self.state.cf(CF_MODELS)?;
+        match self
+            .state
+            .db
+            .get_cf(cf, model_id.as_bytes())
+            .map_err(|e| ChainError::Codec(format!("rocksdb get model: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+        }
     }
 
     /// Buffer a validator record write.

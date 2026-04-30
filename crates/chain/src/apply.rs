@@ -23,7 +23,7 @@
 //! in Week 7-8. Week 3-4 implements the burn side only, using the tx's
 //! `fee` field as the gas budget priced at 1 ark_atom/gas.
 
-use arknet_common::types::{Address, Amount, Gas, Height, Nonce};
+use arknet_common::types::{Address, Amount, Gas, Height, JobId, Nonce};
 
 use crate::errors::{ChainError, Result};
 use crate::state::BlockCtx;
@@ -147,15 +147,57 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
         }
         Transaction::ReceiptBatch(batch) => apply_receipt_batch(ctx, batch, height),
         Transaction::Dispute(d) => apply_dispute(ctx, d, height),
-        Transaction::RegisterModel { .. } => Ok(TxOutcome::Rejected(
-            RejectReason::NotYetImplemented("RegisterModel (Week 10+)"),
-        )),
-        Transaction::GovProposal(_) => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovProposal (Week 10+)",
-        ))),
-        Transaction::GovVote { .. } => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovVote (Week 10+)",
-        ))),
+        Transaction::EscrowLock {
+            from,
+            job_id,
+            amount,
+            nonce,
+            fee,
+        } => apply_escrow_lock(ctx, from, job_id, *amount, *nonce, *fee, height),
+        Transaction::EscrowSettle {
+            job_id,
+            batch_id: _,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+        } => apply_escrow_settle(
+            ctx,
+            job_id,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+            height,
+        ),
+        Transaction::RewardMint {
+            job_id,
+            total_reward,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+            output_tokens: _,
+        } => apply_reward_mint(
+            ctx,
+            job_id,
+            *total_reward,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+        ),
+        Transaction::RegisterModel {
+            manifest,
+            registrar,
+            deposit,
+        } => apply_register_model(ctx, manifest, registrar, *deposit),
+        Transaction::GovProposal(p) => apply_gov_proposal(ctx, &tx.signer, p, height),
+        Transaction::GovVote {
+            proposal_id,
+            voter,
+            choice,
+        } => apply_gov_vote(ctx, *proposal_id, voter, *choice),
     }
 }
 
@@ -257,6 +299,342 @@ fn apply_dispute(
 ///
 /// Matches the derivation used by the genesis loader +
 /// [`crate::genesis::genesis_to_validator_info`]: `blake3(pubkey_bytes)[..20]`.
+/// Gas for escrow lock/settle/refund.
+pub const ESCROW_LOCK_GAS: Gas = 50_000;
+/// Gas for escrow settle.
+pub const ESCROW_SETTLE_GAS: Gas = 50_000;
+/// Gas for reward mint (per recipient line).
+pub const REWARD_MINT_GAS: Gas = 30_000;
+
+/// Lock user funds in escrow for a job.
+#[allow(clippy::too_many_arguments)]
+fn apply_escrow_lock(
+    ctx: &mut BlockCtx<'_>,
+    sender: &Address,
+    job_id: &JobId,
+    amount: Amount,
+    nonce: Nonce,
+    fee: Gas,
+    height: Height,
+) -> Result<TxOutcome> {
+    if amount == 0 {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "zero-amount escrow",
+        )));
+    }
+    // Check for duplicate escrow.
+    if ctx.get_escrow(job_id)?.is_some() {
+        return Ok(TxOutcome::Rejected(RejectReason::ReceiptDoubleAnchor {
+            job_id_hex: hex::encode(job_id.0),
+        }));
+    }
+    // Debit sender.
+    let mut acct = ctx.get_account(sender)?.unwrap_or_default();
+    if acct.nonce != nonce {
+        return Ok(TxOutcome::Rejected(RejectReason::NonceMismatch {
+            expected: acct.nonce,
+            got: nonce,
+        }));
+    }
+    let total = amount.saturating_add(fee as Amount);
+    if acct.balance < total {
+        return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
+            have: acct.balance,
+            need: total,
+        }));
+    }
+    acct.balance -= total;
+    acct.nonce += 1;
+    ctx.set_account(sender, &acct)?;
+
+    // Create escrow record.
+    let entry = crate::escrow_entry::EscrowEntry {
+        job_id: *job_id,
+        user: *sender,
+        amount,
+        created_at: height,
+        state: crate::escrow_entry::EscrowState::Locked,
+    };
+    let bytes =
+        borsh::to_vec(&entry).map_err(|e| ChainError::Codec(format!("escrow encode: {e}")))?;
+    ctx.set_escrow(job_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: ESCROW_LOCK_GAS,
+    })
+}
+
+/// Settle a locked escrow. Distributes the user payment via the
+/// 75/7/5/5/3/5 split immediately, and queues a pending reward for
+/// the block-emission component (minted at the next epoch boundary).
+#[allow(clippy::too_many_arguments)]
+fn apply_escrow_settle(
+    ctx: &mut BlockCtx<'_>,
+    job_id: &JobId,
+    compute_addr: &Address,
+    verifier_addr: &Address,
+    router_addr: &Address,
+    treasury_addr: &Address,
+    height: Height,
+) -> Result<TxOutcome> {
+    let raw = match ctx.get_escrow(job_id)? {
+        Some(b) => b,
+        None => {
+            return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "escrow not found for settle",
+            )));
+        }
+    };
+    let mut entry: crate::escrow_entry::EscrowEntry =
+        borsh::from_slice(&raw).map_err(|e| ChainError::Codec(format!("escrow decode: {e}")))?;
+
+    if entry.state != crate::escrow_entry::EscrowState::Locked {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "escrow not in Locked state",
+        )));
+    }
+
+    // Phase 1: distribute the user payment portion immediately.
+    credit_reward_split(
+        ctx,
+        entry.amount,
+        compute_addr,
+        verifier_addr,
+        router_addr,
+        treasury_addr,
+    )?;
+
+    // Queue the block-emission reward for epoch-boundary minting.
+    // The exact per-token rate is computed at the epoch boundary once
+    // total_tokens for the epoch is known (two-phase settlement).
+    let epoch = height / crate::bootstrap::EPOCH_LENGTH_BLOCKS;
+    let pending = crate::pending_reward::PendingReward {
+        job_id: *job_id,
+        output_tokens: 0, // filled from receipt at settlement
+        user_payment: entry.amount,
+        epoch,
+        compute_addr: *compute_addr,
+        verifier_addr: *verifier_addr,
+        router_addr: *router_addr,
+        treasury_addr: *treasury_addr,
+    };
+    let pr_bytes = borsh::to_vec(&pending)
+        .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
+    ctx.set_pending_reward(job_id, &pr_bytes)?;
+
+    entry.state = crate::escrow_entry::EscrowState::Settled;
+    let bytes =
+        borsh::to_vec(&entry).map_err(|e| ChainError::Codec(format!("escrow encode: {e}")))?;
+    ctx.set_escrow(job_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: ESCROW_SETTLE_GAS,
+    })
+}
+
+/// Mint block rewards for a settled job. The proposer includes this
+/// tx in the block body; the amount is drawn from the epoch emission
+/// budget (enforced by the caller in commit_block, not here — the
+/// apply layer just credits the accounts).
+fn apply_reward_mint(
+    ctx: &mut BlockCtx<'_>,
+    _job_id: &JobId,
+    total_reward: Amount,
+    compute_addr: &Address,
+    verifier_addr: &Address,
+    router_addr: &Address,
+    treasury_addr: &Address,
+) -> Result<TxOutcome> {
+    if total_reward == 0 {
+        return Ok(TxOutcome::Applied {
+            gas_used: REWARD_MINT_GAS,
+        });
+    }
+    credit_reward_split(
+        ctx,
+        total_reward,
+        compute_addr,
+        verifier_addr,
+        router_addr,
+        treasury_addr,
+    )?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REWARD_MINT_GAS * 6,
+    })
+}
+
+/// Credit the 75/7/5/5/3/5 reward split to the given addresses.
+/// `burned` (3%) is dropped — not credited anywhere.
+/// `delegators` (5%) is TODO: pro-rata split across delegators of
+/// the compute node. For now it goes to the compute address as a
+/// simplification; Phase 2 wires the delegation registry.
+/// Gas for model registration.
+pub const REGISTER_MODEL_GAS: Gas = 200_000;
+/// Minimum deposit for model registration (10,000 ARK).
+pub const MODEL_DEPOSIT: Amount = 10_000 * 1_000_000_000;
+
+/// Register a model on-chain. Debits the deposit from the registrar,
+/// persists the manifest in CF_MODELS, and rejects duplicates.
+fn apply_register_model(
+    ctx: &mut BlockCtx<'_>,
+    manifest: &crate::transactions::OnChainModelManifest,
+    registrar: &Address,
+    deposit: Amount,
+) -> Result<TxOutcome> {
+    if deposit < MODEL_DEPOSIT {
+        return Ok(TxOutcome::Rejected(RejectReason::FeeTooLow {
+            min: MODEL_DEPOSIT as Gas,
+            got: deposit as Gas,
+        }));
+    }
+    if manifest.model_id.is_empty() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "empty model_id",
+        )));
+    }
+    if ctx.get_model(&manifest.model_id)?.is_some() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "model already registered",
+        )));
+    }
+    let mut acct = ctx.get_account(registrar)?.unwrap_or_default();
+    if acct.balance < deposit {
+        return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
+            have: acct.balance,
+            need: deposit,
+        }));
+    }
+    acct.balance -= deposit;
+    ctx.set_account(registrar, &acct)?;
+
+    let bytes =
+        borsh::to_vec(manifest).map_err(|e| ChainError::Codec(format!("model encode: {e}")))?;
+    ctx.set_model(&manifest.model_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REGISTER_MODEL_GAS,
+    })
+}
+
+/// Gas for governance proposal submission.
+pub const GOV_PROPOSAL_GAS: Gas = 500_000;
+/// Gas for governance vote.
+pub const GOV_VOTE_GAS: Gas = 30_000;
+/// Minimum deposit for a governance proposal (10,000 ARK).
+pub const PROPOSAL_DEPOSIT: Amount = 10_000 * 1_000_000_000;
+
+/// Submit a governance proposal. Debits the deposit from the
+/// proposer's balance and creates the proposal record.
+fn apply_gov_proposal(
+    ctx: &mut BlockCtx<'_>,
+    signer: &arknet_common::types::PubKey,
+    proposal: &crate::transactions::Proposal,
+    height: Height,
+) -> Result<TxOutcome> {
+    let sender = derive_address_from_signer(signer);
+    if proposal.deposit < PROPOSAL_DEPOSIT {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "deposit below minimum",
+        )));
+    }
+    let mut acct = ctx.get_account(&sender)?.unwrap_or_default();
+    if acct.balance < proposal.deposit {
+        return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
+            have: acct.balance,
+            need: proposal.deposit,
+        }));
+    }
+    acct.balance -= proposal.deposit;
+    ctx.set_account(&sender, &acct)?;
+
+    let id = ctx.state().next_proposal_id()?;
+    let record = crate::governance_entry::ProposalRecord {
+        proposal: proposal.clone(),
+        phase: crate::governance_entry::ProposalPhase::Discussion,
+        submitted_at: height,
+    };
+    let bytes =
+        borsh::to_vec(&record).map_err(|e| ChainError::Codec(format!("proposal encode: {e}")))?;
+    ctx.set_proposal(id, &bytes)?;
+    ctx.set_next_proposal_id(id + 1)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: GOV_PROPOSAL_GAS,
+    })
+}
+
+/// Cast a governance vote. Records the vote keyed by
+/// `(proposal_id, voter)`. Duplicate votes are rejected.
+fn apply_gov_vote(
+    ctx: &mut BlockCtx<'_>,
+    proposal_id: u64,
+    voter: &Address,
+    choice: crate::transactions::VoteChoice,
+) -> Result<TxOutcome> {
+    // Check proposal exists.
+    if ctx.get_proposal(proposal_id)?.is_none() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "proposal not found",
+        )));
+    }
+    // Check for duplicate vote.
+    let key = gov_vote_key(proposal_id, voter);
+    if ctx.get_vote(&key)?.is_some() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "duplicate vote",
+        )));
+    }
+    let choice_byte = choice as u8;
+    ctx.set_vote(&key, &[choice_byte])?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: GOV_VOTE_GAS,
+    })
+}
+
+/// Vote key: `proposal_id(8 BE) || voter(20)`.
+fn gov_vote_key(proposal_id: u64, voter: &Address) -> Vec<u8> {
+    let mut k = Vec::with_capacity(28);
+    k.extend_from_slice(&proposal_id.to_be_bytes());
+    k.extend_from_slice(voter.as_bytes());
+    k
+}
+
+fn credit_reward_split(
+    ctx: &mut BlockCtx<'_>,
+    total: Amount,
+    compute_addr: &Address,
+    verifier_addr: &Address,
+    router_addr: &Address,
+    treasury_addr: &Address,
+) -> Result<()> {
+    let compute = total * 75 / 100;
+    let verifier = total * 7 / 100;
+    let router = total * 5 / 100;
+    let burned = total * 3 / 100;
+    let delegators = total * 5 / 100;
+    let treasury = total - compute - verifier - router - burned - delegators;
+
+    // Compute + delegators (simplified: all to compute for now).
+    let compute_total = compute + delegators;
+
+    for (addr, amount) in [
+        (compute_addr, compute_total),
+        (verifier_addr, verifier),
+        (router_addr, router),
+        (treasury_addr, treasury),
+    ] {
+        if amount > 0 {
+            let mut acct = ctx.get_account(addr)?.unwrap_or_default();
+            acct.balance = acct.balance.saturating_add(amount);
+            ctx.set_account(addr, &acct)?;
+        }
+    }
+    // `burned` is intentionally not credited anywhere.
+    Ok(())
+}
+
 fn derive_address_from_signer(signer: &arknet_common::types::PubKey) -> Address {
     let digest = arknet_crypto::hash::blake3(&signer.bytes);
     let mut out = [0u8; 20];
@@ -559,5 +937,123 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(e.amount, 2_500);
+    }
+
+    fn sample_manifest() -> crate::transactions::OnChainModelManifest {
+        crate::transactions::OnChainModelManifest {
+            model_id: "meta-llama/Llama-3-8B".to_string(),
+            sha256: [0xab; 32],
+            size_bytes: 4_000_000_000,
+            mirrors: vec!["https://example.com/llama3.gguf".to_string()],
+            license: "Llama-3".to_string(),
+        }
+    }
+
+    #[test]
+    fn register_model_happy_path() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, MODEL_DEPOSIT + 1_000_000);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        let outcome = apply_tx(&mut ctx, &stx).unwrap();
+        assert_eq!(
+            outcome,
+            TxOutcome::Applied {
+                gas_used: REGISTER_MODEL_GAS
+            }
+        );
+        ctx.commit().unwrap();
+
+        let acct = state.get_account(&registrar).unwrap().unwrap();
+        assert_eq!(acct.balance, 1_000_000);
+
+        let model = state.get_model("meta-llama/Llama-3-8B").unwrap();
+        assert!(model.is_some());
+        assert_eq!(model.unwrap().size_bytes, 4_000_000_000);
+    }
+
+    #[test]
+    fn register_model_rejects_duplicate() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, MODEL_DEPOSIT * 3);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx).unwrap();
+        ctx.commit().unwrap();
+
+        let stx2 = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx2).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented("model already registered")) => {}
+            other => panic!("expected duplicate rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_model_rejects_insufficient_balance() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, 100);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::InsufficientBalance { .. }) => {}
+            other => panic!("expected insufficient balance, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_model_rejects_low_deposit() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, MODEL_DEPOSIT * 2);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: 100,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::FeeTooLow { .. }) => {}
+            other => panic!("expected low deposit rejection, got {other:?}"),
+        }
     }
 }

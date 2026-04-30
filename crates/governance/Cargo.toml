@@ -10,4 +10,7 @@ description   = "On-chain governance: proposals, voting, parameter changes, upgr
 [dependencies]
 arknet-common = { workspace = true }
 arknet-chain  = { workspace = true }
+borsh         = { workspace = true }
+serde         = { workspace = true }
 thiserror     = { workspace = true }
+tracing       = { workspace = true }
