@@ -549,7 +549,7 @@ fn distribute_to_delegators(
             // Last delegator gets the remainder to avoid rounding loss.
             delegator_total.saturating_sub(distributed)
         } else {
-            delegator_total * stake.amount / total_delegated
+            delegator_total.saturating_mul(stake.amount) / total_delegated
         };
         if share > 0 {
             // Safety: filtered above to only entries with `delegator.is_some()`.
