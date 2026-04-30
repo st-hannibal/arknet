@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tokenomics — arknet</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:24px; letter-spacing:-0.02em; }
+  h2 { font-size:22px; margin:36px 0 12px; }
+  p { margin:12px 0; } a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; }
+  th { color:var(--muted); font-weight:600; }
+  code { font:14px "SF Mono",Menlo,monospace; background:var(--code-bg); padding:2px 6px; border-radius:4px; }
+  .note { background:var(--code-bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:16px 20px; margin:20px 0; }
+  ul { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
+</nav>
+<main>
+
+<h1>ARK Tokenomics</h1>
+
+<div class="note">
+<p><strong>Fair launch.</strong> Zero tokens exist at genesis. No premine, no investor allocation, no team tokens, no airdrop. Every ARK in circulation is minted against verified inference work.</p>
+</div>
+
+<h2>Supply</h2>
+<table>
+  <tr><th>Parameter</th><th>Value</th></tr>
+  <tr><td>Hard cap</td><td><strong>1,000,000,000 ARK</strong></td></tr>
+  <tr><td>Decimals</td><td>9 (1 ARK = 10<sup>9</sup> ark_atom)</td></tr>
+  <tr><td>At genesis</td><td>0 ARK</td></tr>
+  <tr><td>Practical maximum</td><td>~795M ARK (geometric halving converges)</td></tr>
+</table>
+
+<h2>Emission schedule</h2>
+<p>ARK is minted per-epoch (3,600 blocks ~ 1 hour) against verified inference output. Annual emission halves every 4 years after Year 4:</p>
+<table>
+  <tr><th>Year</th><th>Annual emission</th></tr>
+  <tr><td>0 (launch)</td><td>120,000,000 ARK</td></tr>
+  <tr><td>1</td><td>105,000,000</td></tr>
+  <tr><td>2</td><td>90,000,000</td></tr>
+  <tr><td>3</td><td>80,000,000</td></tr>
+  <tr><td>4-7</td><td>50,000,000</td></tr>
+  <tr><td>8-11</td><td>25,000,000</td></tr>
+  <tr><td>12-15</td><td>12,500,000</td></tr>
+  <tr><td>16+</td><td>Halves every 4 years</td></tr>
+</table>
+<p>Unspent epoch budgets roll forward — no emission is ever burned or lost.</p>
+
+<h2>Reward distribution</h2>
+<p>Every settled inference job distributes rewards across six recipients:</p>
+<table>
+  <tr><th>Recipient</th><th>Share</th><th>Purpose</th></tr>
+  <tr><td><strong>Compute node</strong></td><td>75%</td><td>The operator who ran the model</td></tr>
+  <tr><td><strong>Verifier</strong></td><td>7%</td><td>Re-executed the job for correctness</td></tr>
+  <tr><td><strong>Router</strong></td><td>5%</td><td>Dispatched the request</td></tr>
+  <tr><td><strong>Treasury</strong></td><td>5%</td><td>Governance-controlled fund</td></tr>
+  <tr><td><strong>Burned</strong></td><td>3%</td><td>Deflationary pressure</td></tr>
+  <tr><td><strong>Delegators</strong></td><td>5%</td><td>Pro-rata to stakers on the compute node</td></tr>
+</table>
+
+<h2>Reward multipliers</h2>
+<p>Block rewards scale based on model characteristics and node performance (all integer arithmetic, no floating point):</p>
+<ul>
+  <li><strong>Model size</strong> — 1x (7B), 1.5x (13B), 2.5x (30B), 4x (70B), 10x (400B+)</li>
+  <li><strong>Model category</strong> — 1x text, 0.3x embedding, 2x image, 1.5x audio, 3x multimodal</li>
+  <li><strong>Latency bonus</strong> — up to 1.2x for beating expected TTFT</li>
+  <li><strong>Uptime bonus</strong> — 1.1x for >95% uptime over 30 days</li>
+</ul>
+
+<h2>Staking</h2>
+<p>Every role requires stake (except during the bootstrap epoch):</p>
+<ul>
+  <li><strong>Validators</strong> — secure consensus, earn block-production rewards</li>
+  <li><strong>Compute nodes</strong> — stake proportional to model size served</li>
+  <li><strong>Routers</strong> — stake to participate in job dispatch</li>
+  <li><strong>Verifiers</strong> — stake to earn verification rewards</li>
+</ul>
+<p>Delegation supported: stake on any node operator and earn the 5% delegator cut pro-rata.</p>
+<p>Unbonding period: 14 days. Redelegate cooldown: 1 day.</p>
+
+<h2>Slashing</h2>
+<p>Dishonest behavior loses stake:</p>
+<ul>
+  <li><strong>Failed deterministic verification</strong> — compute node produced wrong output. 10% of stake slashed.</li>
+  <li><strong>Double-signing</strong> — validator signed conflicting blocks. 5% slashed.</li>
+  <li><strong>Downtime</strong> — validator missed too many blocks. 0.1% slashed per offense.</li>
+</ul>
+<p>Slashed amounts split: 50% burned, 30% to reporter, 20% to treasury.</p>
+
+<h2>Fee market</h2>
+<p>EIP-1559 style: base fee adjusts per block based on gas utilization. Base fees are burned. Tips go to the block proposer.</p>
+
+<h2>Dynamic pricing</h2>
+<p>Per-token inference prices adjust at each epoch boundary using a utilization-based oracle with adaptive EMA smoothing. High demand raises prices; low demand lowers them. Floor: free tier. Ceiling: governance-adjustable.</p>
+
+<h2>Governance</h2>
+<p>On-chain proposals with deposit (10,000 ARK), discussion period (7 days), voting period (7 days). Quorum: 50%. Approval: 66%. Veto threshold: 33%. Passed proposals can adjust protocol parameters, emission rates, and fee targets.</p>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+</body>
+</html>

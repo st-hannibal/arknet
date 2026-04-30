@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting Started — arknet</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:24px; letter-spacing:-0.02em; }
+  h2 { font-size:22px; margin:36px 0 12px; }
+  h3 { font-size:18px; margin:24px 0 8px; }
+  p { margin:12px 0; } a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  code,pre { font:14px/1.5 "SF Mono",Menlo,Consolas,monospace; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:16px; overflow-x:auto; margin:16px 0; }
+  code { background:var(--code-bg); padding:2px 6px; border-radius:4px; }
+  ul,ol { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  .note { background:var(--code-bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:16px 20px; margin:20px 0; }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
+</nav>
+<main>
+
+<h1>Getting Started</h1>
+<p>Three steps to join the arknet network. Total time: under 5 minutes.</p>
+
+<h2>1. Install</h2>
+<pre>curl -fsSL https://arknet.arkengel.com/install.sh | sh</pre>
+<p>Or build from source:</p>
+<pre>git clone https://github.com/st-hannibal/arknet.git
+cd arknet
+cargo build --release
+cp target/release/arknet /usr/local/bin/</pre>
+
+<h2>2. Initialize</h2>
+<pre>arknet init --network mainnet</pre>
+<p>This creates <code>~/.arknet/</code> with your node identity (keypair) and default config. Your key is generated once and persisted — it's your node's permanent identity on the network.</p>
+
+<h2>3. Configure and start</h2>
+<p>Edit <code>~/.arknet/node.toml</code> to pick your role:</p>
+
+<h3>Compute node (needs GPU)</h3>
+<pre>[roles]
+compute = true
+
+[resources.compute]
+gpu_devices = [0]
+max_vram_gb = 8
+loaded_models = ["meta-llama/Llama-3.1-8B-Instruct:Q4_K_M"]</pre>
+<pre>arknet start --role compute</pre>
+
+<h3>Router (any hardware)</h3>
+<pre>[roles]
+router = true</pre>
+<pre>arknet start --role router</pre>
+
+<h3>Validator (needs stake)</h3>
+<pre>[roles]
+validator = true</pre>
+<pre>arknet start --role validator</pre>
+
+<div class="note">
+<p><strong>Hardware guide:</strong> A Raspberry Pi 5 can run a router. A laptop with an RTX 3060 can serve 7B models. A desktop with an RTX 4090 can serve 27B models. Match the model tier to your VRAM — see <a href="/docs/models.html">Genesis Models</a>.</p>
+</div>
+
+<h2>Verify it's working</h2>
+<pre># Check node health
+curl http://localhost:26657/health
+
+# Check peers
+curl http://localhost:26657/peers
+
+# Check chain status
+curl http://localhost:26657/v1/status
+
+# List available models
+curl http://localhost:26657/v1/models</pre>
+
+<h2>Use the API</h2>
+<p>Once a compute node is serving models, any OpenAI client works:</p>
+<pre>from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:26657/v1", api_key="ark_...")
+resp = client.chat.completions.create(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True,
+)
+for chunk in resp:
+    print(chunk.choices[0].delta.content, end="")</pre>
+
+<h2>Earning ARK</h2>
+<p>Once your node is serving verified inference:</p>
+<ul>
+  <li><strong>Compute nodes</strong> earn 75% of the reward per job</li>
+  <li><strong>Routers</strong> earn 5% for dispatching</li>
+  <li><strong>Verifiers</strong> earn 7% for checking output</li>
+  <li><strong>3% is burned</strong> (deflationary)</li>
+  <li><strong>5% to treasury</strong> (governance-controlled)</li>
+  <li><strong>5% to delegators</strong> (pro-rata by staked amount)</li>
+</ul>
+<p>Rewards are minted from the emission schedule. See <a href="/docs/tokenomics.html">Tokenomics</a> for details.</p>
+
+<h2>Next steps</h2>
+<ul>
+  <li><a href="/docs/models.html">Browse genesis models</a> — pick what your hardware can serve</li>
+  <li><a href="/docs/tokenomics.html">Understand ARK economics</a> — emission, staking, governance</li>
+  <li><a href="/docs/developers.html">Build on arknet</a> — SDKs, API reference, dApp integration</li>
+  <li><a href="https://github.com/st-hannibal/arknet/discussions">Join the forum</a> — ask questions, report bugs</li>
+</ul>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+</body>
+</html>
