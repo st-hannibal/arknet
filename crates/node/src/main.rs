@@ -20,6 +20,7 @@ mod rpc;
 mod runtime;
 mod scheduler;
 mod validator;
+mod verifier_role;
 
 use clap::Parser;
 

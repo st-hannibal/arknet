@@ -71,7 +71,7 @@ pub async fn run(role: Role, rt: NodeRuntime, shutdown: CancellationToken) -> Re
         }
         Role::Router => crate::router_role::run(rt, shutdown).await,
         Role::Validator => run_validator(rt, shutdown).await,
-        Role::Verifier => Err(NodeError::RoleNotImplemented(role.to_string())),
+        Role::Verifier => crate::verifier_role::run(rt, shutdown).await,
     }
 }
 
@@ -162,9 +162,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verifier_role_errors_cleanly() {
-        // Verifier is still a Phase-1-Week-11 role; it errors out.
-        // Router is tested below because Week 10 gave it a real body.
+    async fn verifier_role_without_consensus_errors() {
+        // Verifier now has a real body but requires a consensus handle
+        // (for block events + dispute submission). Without one it
+        // returns Config error.
         let tmp = tempfile::tempdir().unwrap();
         let cfg = arknet_common::config::NodeConfig::default();
         let rt = NodeRuntime::open(tmp.path().to_path_buf(), cfg)
@@ -173,7 +174,7 @@ mod tests {
         let shutdown = CancellationToken::new();
 
         let err = run(Role::Verifier, rt, shutdown).await.unwrap_err();
-        assert!(matches!(err, NodeError::RoleNotImplemented(_)));
+        assert!(matches!(err, NodeError::Config(_)));
     }
 
     #[tokio::test]

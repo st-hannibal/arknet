@@ -52,7 +52,7 @@ pub mod session;
 pub mod tokenizer;
 
 pub use backend::{init_once, BackendCapabilities};
-pub use checkpoint::{CheckpointableSession, Phase0CheckpointStub};
+pub use checkpoint::{CheckpointStore, CheckpointableSession};
 pub use config::{InferenceConfig, InferenceMode, SamplingParams};
 pub use context::{Context, ContextParams};
 pub use engine::{InferenceEngine, InferenceRequest, ModelHandle};

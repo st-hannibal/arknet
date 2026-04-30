@@ -30,8 +30,10 @@
 
 use arknet_chain::apply::{apply_tx, TxOutcome};
 use arknet_chain::block::Block;
+use arknet_chain::transactions::Transaction;
 use arknet_chain::State;
-use arknet_common::types::{Gas, StateRoot};
+use arknet_common::types::{Address, Gas, StateRoot};
+use arknet_staking::slashing::{apply_slash, Offense};
 
 use crate::mempool::Mempool;
 
@@ -114,6 +116,33 @@ pub fn commit_block(
         }
     }
 
+    // Slash dispatch: accepted Dispute txs trigger
+    // `apply_slash(FailedDeterministicVerification)` against the
+    // compute node. Reporter cut goes to `dispute.reporter`; burn
+    // + treasury use the genesis-default treasury address.
+    let treasury = genesis_treasury_address();
+    for tx in &block.txs {
+        if let Transaction::Dispute(d) = &tx.tx {
+            if d.claimed_output_hash != d.reexec_output_hash {
+                if let Err(e) = apply_slash(
+                    &mut ctx,
+                    &d.compute_node,
+                    arknet_chain::StakeRole::Compute,
+                    Offense::FailedDeterministicVerification,
+                    &d.reporter,
+                    &treasury,
+                ) {
+                    tracing::warn!(
+                        job_id = ?d.job_id,
+                        compute = ?d.compute_node,
+                        error = %e,
+                        "slash for dispute failed — compute node may have no stake"
+                    );
+                }
+            }
+        }
+    }
+
     // Epoch rotation (§9.5 + §16 `EPOCH_LENGTH_BLOCKS`). Run before
     // the state-root preview so the rotation is part of the same
     // root the block header commits to.
@@ -143,6 +172,28 @@ pub fn commit_block(
     let committed_root = ctx.commit()?;
     debug_assert_eq!(committed_root, replayed_root);
 
+    // Emit Phase-1 metrics for the committed block.
+    metrics::gauge!("arknet_consensus_height").set(block.header.height as f64);
+    let mut receipts_count: u64 = 0;
+    let mut disputes_count: u64 = 0;
+    for tx in &block.txs {
+        match &tx.tx {
+            Transaction::ReceiptBatch(batch) => {
+                receipts_count += batch.receipts.len() as u64;
+            }
+            Transaction::Dispute(_) => {
+                disputes_count += 1;
+            }
+            _ => {}
+        }
+    }
+    if receipts_count > 0 {
+        metrics::counter!("arknet_receipts_anchored_total").increment(receipts_count);
+    }
+    if disputes_count > 0 {
+        metrics::counter!("arknet_disputes_filed_total").increment(disputes_count);
+    }
+
     // Drop any committed tx from the mempool (idempotent if missing).
     let landed: Vec<_> = block.txs.iter().map(|t| t.hash()).collect();
     mempool.remove_many(&landed);
@@ -152,6 +203,19 @@ pub fn commit_block(
         gas_used,
         applied_count,
     })
+}
+
+/// Genesis-default treasury address.
+///
+/// Phase 1 uses a well-known address derived deterministically from a
+/// fixed domain tag. Phase 2 moves this to an explicit field in the
+/// genesis config (governance-updatable). The address matches
+/// `blake3(b"arknet-treasury-v1")[0..20]`.
+fn genesis_treasury_address() -> Address {
+    let digest = blake3::hash(b"arknet-treasury-v1");
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&digest.as_bytes()[..20]);
+    Address::new(out)
 }
 
 #[cfg(test)]

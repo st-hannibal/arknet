@@ -171,6 +171,7 @@ enum Command {
 #[derive(Clone)]
 pub struct ConsensusHandle {
     tx: mpsc::Sender<Command>,
+    block_events: tokio::sync::broadcast::Sender<Arc<Block>>,
 }
 
 impl ConsensusHandle {
@@ -200,6 +201,16 @@ impl ConsensusHandle {
             .map_err(|e| format!("engine task exited: {e}"))?;
         rx.await.map_err(|e| format!("engine reply lost: {e}"))
     }
+
+    /// Wait for the next finalized block. Returns an `Arc<Block>` so
+    /// multiple subscribers can reference the same allocation. Used by
+    /// the verifier role body to scan receipts.
+    pub async fn next_finalized_block(&self) -> std::result::Result<Arc<Block>, String> {
+        let mut rx = self.block_events.subscribe();
+        rx.recv()
+            .await
+            .map_err(|e| format!("block event recv: {e}"))
+    }
 }
 
 /// The consensus engine entry point.
@@ -217,8 +228,20 @@ impl ConsensusEngine {
         shutdown: CancellationToken,
     ) -> (ConsensusHandle, tokio::task::JoinHandle<Result<()>>) {
         let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(64);
-        let handle = ConsensusHandle { tx: cmd_tx };
-        let join = tokio::spawn(run(cfg, chain_state, network, signer, cmd_rx, shutdown));
+        let (block_tx, _) = tokio::sync::broadcast::channel::<Arc<Block>>(64);
+        let handle = ConsensusHandle {
+            tx: cmd_tx,
+            block_events: block_tx.clone(),
+        };
+        let join = tokio::spawn(run(
+            cfg,
+            chain_state,
+            network,
+            signer,
+            cmd_rx,
+            block_tx,
+            shutdown,
+        ));
         (handle, join)
     }
 }
@@ -237,6 +260,7 @@ async fn run(
     network: NetworkHandle,
     signer: Arc<ArknetSigningProvider>,
     mut cmd_rx: mpsc::Receiver<Command>,
+    block_events: tokio::sync::broadcast::Sender<Arc<Block>>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     info!(
@@ -297,6 +321,7 @@ async fn run(
                 &mut validator_set_hash,
                 &mut last_proposed_drain,
                 &mut decided_block_cache,
+                &block_events,
                 input,
             )
             .await?;
@@ -416,6 +441,7 @@ async fn drive_one_input(
     validator_set_hash: &mut Hash256,
     last_proposed_drain: &mut Option<(Height, Vec<Arc<SignedTransaction>>)>,
     decided_block_cache: &mut Option<Block>,
+    block_events: &tokio::sync::broadcast::Sender<Arc<Block>>,
     input: Input<ArknetContext>,
 ) -> Result<Vec<Input<ArknetContext>>> {
     let mut follow_ups: Vec<Input<ArknetContext>> = Vec::new();
@@ -438,6 +464,7 @@ async fn drive_one_input(
             validator_set_hash,
             last_proposed_drain,
             decided_block_cache,
+            block_events,
             &mut follow_ups,
         ).await
     );
@@ -467,6 +494,7 @@ async fn handle_effect(
     validator_set_hash: &mut Hash256,
     last_proposed_drain: &mut Option<(Height, Vec<Arc<SignedTransaction>>)>,
     decided_block_cache: &mut Option<Block>,
+    block_events: &tokio::sync::broadcast::Sender<Arc<Block>>,
     follow_ups: &mut Vec<Input<ArknetContext>>,
 ) -> std::result::Result<Resume<ArknetContext>, malachitebft_core_consensus::Error<ArknetContext>> {
     use malachitebft_core_types::SigningProvider as _;
@@ -592,6 +620,7 @@ async fn handle_effect(
                         base_fee,
                         parent_hash,
                         cfg,
+                        block_events,
                     ) {
                         error!(error = %e, "apply_commit failed");
                     }
@@ -669,6 +698,7 @@ fn apply_commit(
     base_fee: &mut u128,
     parent_hash: &mut BlockHash,
     cfg: &EngineConfig,
+    block_events: &tokio::sync::broadcast::Sender<Arc<Block>>,
 ) -> Result<()> {
     let mut mp = mempool.lock();
     let report = commit_block(chain_state, &mut mp, block)
@@ -685,6 +715,9 @@ fn apply_commit(
     )
     .unwrap_or(block.header.base_fee);
     *base_fee = new_fee;
+
+    // Notify subscribers (verifier role, metrics) of the finalized block.
+    let _ = block_events.send(Arc::new(block.clone()));
 
     info!(
         height = %committed_height.0,

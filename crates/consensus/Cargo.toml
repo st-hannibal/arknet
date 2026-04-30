@@ -27,6 +27,8 @@ parking_lot    = { workspace = true }
 
 tracing        = { workspace = true }
 thiserror      = { workspace = true }
+blake3         = { workspace = true }
+metrics        = { workspace = true }
 
 # Malachite BFT — raw consensus core + driver only, no engine/network.
 # We bridge to our own `arknet-network` libp2p stack explicitly so this
