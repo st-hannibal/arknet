@@ -147,6 +147,8 @@ pub struct EngineConfig {
     pub local_node_id: NodeId,
     /// Timeout configuration.
     pub timeouts: TimeoutConfig,
+    /// Genesis coinbase message — embedded in block 0's header only.
+    pub genesis_message: String,
 }
 
 /// Commands accepted over [`ConsensusHandle`].
@@ -567,6 +569,11 @@ async fn handle_effect(
                 base_fee: *base_fee,
                 gas_limit: cfg.gas_limit,
                 bytes_budget: crate::block_builder::DEFAULT_BLOCK_BYTES_BUDGET,
+                genesis_message: if height == Height(1) {
+                    cfg.genesis_message.clone()
+                } else {
+                    String::new()
+                },
             };
             let mut mp = mempool.lock();
             match BlockBuilder::build(chain_state, &mut mp, height, params) {

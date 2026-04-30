@@ -410,6 +410,7 @@ mod tests {
             base_fee: 1_000_000_000,
             gas_limit: DEFAULT_BLOCK_GAS_LIMIT,
             bytes_budget: DEFAULT_BLOCK_BYTES_BUDGET,
+            genesis_message: String::new(),
         }
     }
 

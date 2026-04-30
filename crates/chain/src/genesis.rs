@@ -40,6 +40,10 @@ pub struct GenesisConfig {
     pub initial_accounts: Vec<InitialAccount>,
     /// Initial protocol parameters.
     pub params: GenesisParams,
+    /// Coinbase message embedded in block 0. Timestamped proof that
+    /// the chain was not pre-mined before this date.
+    #[serde(default)]
+    pub genesis_message: String,
 }
 
 /// Entry in the hardcoded initial validator set.

@@ -114,6 +114,7 @@ pub async fn start_validator(
         local_address: ChainAddress(local_address),
         local_node_id,
         timeouts: TimeoutConfig::default(),
+        genesis_message: genesis.genesis_message.clone(),
     };
 
     info!(
