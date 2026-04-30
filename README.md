@@ -125,7 +125,7 @@ This is the same model as every blockchain: Bitcoin exposes port 8333, Ethereum 
 
 No premine. No investors. No team allocation. No airdrop. Every ARK is minted against verified inference work after genesis. The maintainer holds zero tokens at launch.
 
-**Bootstrap period** (first 6 months or until 25 validators): inference is free, `min_stake = 0`, anyone can join. Compute nodes earn ARK from block emission for serving free requests. This bootstraps the token supply from zero — same model as early Bitcoin mining.
+**Bootstrap period** (first 6 months or until 100 unique validators): inference is free, `min_stake = 0`, anyone can join. Compute nodes earn ARK from block emission for serving free requests. This bootstraps the token supply from zero — same model as early Bitcoin mining.
 
 ## Genesis models
 

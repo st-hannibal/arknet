@@ -21,7 +21,10 @@ use arknet_common::types::Height;
 pub const BOOTSTRAP_MAX_BLOCKS: Height = 6 * 30 * 86_400;
 
 /// §16: chain exits bootstrap once this many validators are active.
-pub const BOOTSTRAP_VALIDATOR_TARGET: u32 = 25;
+/// Set high to prevent premature exit from one operator running
+/// many nodes. The 6-month time floor ensures broad distribution
+/// even if 100 validators join quickly.
+pub const BOOTSTRAP_VALIDATOR_TARGET: u32 = 100;
 
 /// §16: epoch length (validator-set rebuild cadence).
 pub const EPOCH_LENGTH_BLOCKS: Height = 3_600;
