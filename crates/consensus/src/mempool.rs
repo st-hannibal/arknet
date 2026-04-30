@@ -382,8 +382,8 @@ fn extract_sender_nonce_fee(tx: &Transaction) -> Result<(Address, Nonce, Gas), M
         Transaction::RewardMint { .. } => {
             Err(MempoolError::Unsupported("RewardMint (proposer-only)"))
         }
-        Transaction::GovProposal(_) => Err(MempoolError::Unsupported("GovProposal")),
-        Transaction::GovVote { .. } => Err(MempoolError::Unsupported("GovVote")),
+        Transaction::GovProposal(p) => Ok((p.proposer, 0, 500_000)),
+        Transaction::GovVote { voter, .. } => Ok((*voter, 0, 30_000)),
     }
 }
 

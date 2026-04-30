@@ -11,6 +11,7 @@
 pub mod emission;
 pub mod errors;
 pub mod escrow;
+pub mod pricing;
 pub mod rewards;
 
 pub use emission::{
@@ -22,6 +23,7 @@ pub use escrow::{
     create_escrow, refund_escrow, settle_escrow, EscrowEntry, EscrowLockParams, EscrowState,
     ESCROW_LOCK_GAS, ESCROW_REFUND_GAS, ESCROW_SETTLE_GAS, ESCROW_TIMEOUT_BLOCKS,
 };
+pub use pricing::{PricingState, GENESIS_BASE_PRICE, PRICE_CEILING, PRICE_FLOOR, PRICE_SCALE};
 pub use rewards::{
     compute_block_reward, credit_rewards, distribute_reward, latency_mult, size_mult, uptime_mult,
     ModelCategory, RewardDistribution, BURN_PERCENT, COMPUTE_PERCENT, DELEGATOR_PERCENT,

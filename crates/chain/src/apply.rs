@@ -190,12 +190,12 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
         Transaction::RegisterModel { .. } => Ok(TxOutcome::Rejected(
             RejectReason::NotYetImplemented("RegisterModel"),
         )),
-        Transaction::GovProposal(_) => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovProposal",
-        ))),
-        Transaction::GovVote { .. } => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovVote",
-        ))),
+        Transaction::GovProposal(p) => apply_gov_proposal(ctx, &tx.signer, p, height),
+        Transaction::GovVote {
+            proposal_id,
+            voter,
+            choice,
+        } => apply_gov_vote(ctx, *proposal_id, voter, *choice),
     }
 }
 
@@ -448,6 +448,90 @@ fn apply_reward_mint(
 /// `delegators` (5%) is TODO: pro-rata split across delegators of
 /// the compute node. For now it goes to the compute address as a
 /// simplification; Phase 2 wires the delegation registry.
+/// Gas for governance proposal submission.
+pub const GOV_PROPOSAL_GAS: Gas = 500_000;
+/// Gas for governance vote.
+pub const GOV_VOTE_GAS: Gas = 30_000;
+/// Minimum deposit for a governance proposal (10,000 ARK).
+pub const PROPOSAL_DEPOSIT: Amount = 10_000 * 1_000_000_000;
+
+/// Submit a governance proposal. Debits the deposit from the
+/// proposer's balance and creates the proposal record.
+fn apply_gov_proposal(
+    ctx: &mut BlockCtx<'_>,
+    signer: &arknet_common::types::PubKey,
+    proposal: &crate::transactions::Proposal,
+    height: Height,
+) -> Result<TxOutcome> {
+    let sender = derive_address_from_signer(signer);
+    if proposal.deposit < PROPOSAL_DEPOSIT {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "deposit below minimum",
+        )));
+    }
+    let mut acct = ctx.get_account(&sender)?.unwrap_or_default();
+    if acct.balance < proposal.deposit {
+        return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
+            have: acct.balance,
+            need: proposal.deposit,
+        }));
+    }
+    acct.balance -= proposal.deposit;
+    ctx.set_account(&sender, &acct)?;
+
+    let id = ctx.state().next_proposal_id()?;
+    let record = crate::governance_entry::ProposalRecord {
+        proposal: proposal.clone(),
+        phase: crate::governance_entry::ProposalPhase::Discussion,
+        submitted_at: height,
+    };
+    let bytes =
+        borsh::to_vec(&record).map_err(|e| ChainError::Codec(format!("proposal encode: {e}")))?;
+    ctx.set_proposal(id, &bytes)?;
+    ctx.set_next_proposal_id(id + 1)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: GOV_PROPOSAL_GAS,
+    })
+}
+
+/// Cast a governance vote. Records the vote keyed by
+/// `(proposal_id, voter)`. Duplicate votes are rejected.
+fn apply_gov_vote(
+    ctx: &mut BlockCtx<'_>,
+    proposal_id: u64,
+    voter: &Address,
+    choice: crate::transactions::VoteChoice,
+) -> Result<TxOutcome> {
+    // Check proposal exists.
+    if ctx.get_proposal(proposal_id)?.is_none() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "proposal not found",
+        )));
+    }
+    // Check for duplicate vote.
+    let key = gov_vote_key(proposal_id, voter);
+    if ctx.get_vote(&key)?.is_some() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "duplicate vote",
+        )));
+    }
+    let choice_byte = choice as u8;
+    ctx.set_vote(&key, &[choice_byte])?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: GOV_VOTE_GAS,
+    })
+}
+
+/// Vote key: `proposal_id(8 BE) || voter(20)`.
+fn gov_vote_key(proposal_id: u64, voter: &Address) -> Vec<u8> {
+    let mut k = Vec::with_capacity(28);
+    k.extend_from_slice(&proposal_id.to_be_bytes());
+    k.extend_from_slice(voter.as_bytes());
+    k
+}
+
 fn credit_reward_split(
     ctx: &mut BlockCtx<'_>,
     total: Amount,

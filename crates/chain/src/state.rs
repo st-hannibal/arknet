@@ -54,6 +54,10 @@ const CF_UNBONDINGS: &str = "unbondings";
 const CF_RECEIPTS_SEEN: &str = "receipts_seen";
 /// Escrow entries keyed by `job_id` (32 bytes).
 const CF_ESCROWS: &str = "escrows";
+/// Governance proposals keyed by `proposal_id` (u64 BE).
+const CF_PROPOSALS: &str = "proposals";
+/// Governance votes keyed by `proposal_id(8) || voter(20)`.
+const CF_VOTES: &str = "votes";
 
 // ─── Value wrapper for SMT account leaves ─────────────────────────────────
 
@@ -170,6 +174,8 @@ impl State {
             CF_UNBONDINGS,
             CF_RECEIPTS_SEEN,
             CF_ESCROWS,
+            CF_PROPOSALS,
+            CF_VOTES,
         ]
         .iter()
         .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
@@ -384,6 +390,26 @@ impl State {
             Some(bytes) => {
                 if bytes.len() != 8 {
                     return Err(ChainError::Codec("next_unbond_id invalid length".into()));
+                }
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&bytes);
+                Ok(u64::from_be_bytes(arr))
+            }
+        }
+    }
+
+    /// Read the next proposal id counter.
+    pub fn next_proposal_id(&self) -> Result<u64> {
+        let cf = self.cf(CF_META)?;
+        match self
+            .db
+            .get_cf(cf, b"next_proposal_id")
+            .map_err(|e| ChainError::Codec(format!("rocksdb get: {e}")))?
+        {
+            None => Ok(0),
+            Some(bytes) => {
+                if bytes.len() != 8 {
+                    return Err(ChainError::Codec("next_proposal_id invalid length".into()));
                 }
                 let mut arr = [0u8; 8];
                 arr.copy_from_slice(&bytes);
@@ -644,6 +670,56 @@ impl BlockCtx<'_> {
     pub fn delete_escrow(&mut self, job_id: &JobId) -> Result<()> {
         let cf = self.state.cf(CF_ESCROWS)?;
         self.batch.delete_cf(cf, job_id.0);
+        Ok(())
+    }
+
+    /// Read a proposal record by id.
+    pub fn get_proposal(&self, id: u64) -> Result<Option<Vec<u8>>> {
+        let cf = self.state.cf(CF_PROPOSALS)?;
+        match self
+            .state
+            .db
+            .get_cf(cf, id.to_be_bytes())
+            .map_err(|e| ChainError::Codec(format!("rocksdb get proposal: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+        }
+    }
+
+    /// Write a proposal record.
+    pub fn set_proposal(&mut self, id: u64, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_PROPOSALS)?;
+        self.batch.put_cf(cf, id.to_be_bytes(), data);
+        Ok(())
+    }
+
+    /// Read a vote record.
+    pub fn get_vote(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let cf = self.state.cf(CF_VOTES)?;
+        match self
+            .state
+            .db
+            .get_cf(cf, key)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get vote: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+        }
+    }
+
+    /// Write a vote record.
+    pub fn set_vote(&mut self, key: &[u8], data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_VOTES)?;
+        self.batch.put_cf(cf, key, data);
+        Ok(())
+    }
+
+    /// Write the next proposal id counter.
+    pub fn set_next_proposal_id(&mut self, next: u64) -> Result<()> {
+        let cf = self.state.cf(CF_META)?;
+        self.batch
+            .put_cf(cf, b"next_proposal_id", next.to_be_bytes());
         Ok(())
     }
 
