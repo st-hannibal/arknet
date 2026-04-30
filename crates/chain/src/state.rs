@@ -446,6 +446,23 @@ impl State {
         }
     }
 
+    /// Iterate all escrow entries. Used by the block proposer to
+    /// scan for expired escrows that need refunding.
+    pub fn iter_escrows(&self) -> Result<Vec<(arknet_common::types::JobId, Vec<u8>)>> {
+        let cf = self.cf(CF_ESCROWS)?;
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (k, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter escrows: {e}")))?;
+            if k.len() != 32 {
+                continue;
+            }
+            let mut job_bytes = [0u8; 32];
+            job_bytes.copy_from_slice(&k);
+            out.push((arknet_common::types::JobId::new(job_bytes), v.to_vec()));
+        }
+        Ok(out)
+    }
+
     /// Look up a registered model by `model_id` string.
     pub fn get_model(
         &self,
