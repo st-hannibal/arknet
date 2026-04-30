@@ -47,6 +47,14 @@ pub struct ChatCompletionRequest {
     /// Ignored by non-arknet endpoints.
     #[serde(default)]
     pub prefer_tee: bool,
+    /// arknet extension: route only through HTTPS gateways. Protects
+    /// the last mile (user → gateway) with TLS.
+    ///
+    /// Usage with OpenAI client: `extra_body={"require_https": True}`.
+    /// If no HTTPS gateway is available, returns an error (no silent
+    /// downgrade to HTTP).
+    #[serde(default)]
+    pub require_https: bool,
 }
 
 fn default_max_tokens() -> u32 {

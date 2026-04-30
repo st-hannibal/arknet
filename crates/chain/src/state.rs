@@ -67,6 +67,9 @@ const CF_MODELS: &str = "models";
 /// TEE capability registry keyed by `node_id` (32 bytes).
 /// Value: borsh-encoded `TeeCapability`.
 const CF_TEE: &str = "tee";
+/// Public gateway registry keyed by `node_id` (32 bytes).
+/// Value: borsh-encoded `GatewayEntry`.
+const CF_GATEWAYS: &str = "gateways";
 
 // ─── Value wrapper for SMT account leaves ─────────────────────────────────
 
@@ -189,6 +192,7 @@ impl State {
             CF_VOTES,
             CF_MODELS,
             CF_TEE,
+            CF_GATEWAYS,
         ]
         .iter()
         .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
@@ -563,6 +567,20 @@ impl State {
             let cap: arknet_common::types::TeeCapability =
                 borsh::from_slice(&v).map_err(|e| ChainError::Codec(format!("tee decode: {e}")))?;
             out.push((NodeId::new(node_bytes), cap));
+        }
+        Ok(out)
+    }
+
+    /// Iterate all registered public gateways.
+    pub fn iter_gateways(&self) -> Result<Vec<crate::gateway_entry::GatewayEntry>> {
+        let cf = self.cf(CF_GATEWAYS)?;
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (_, v) =
+                kv.map_err(|e| ChainError::Codec(format!("rocksdb iter gateways: {e}")))?;
+            let entry: crate::gateway_entry::GatewayEntry = borsh::from_slice(&v)
+                .map_err(|e| ChainError::Codec(format!("gateway decode: {e}")))?;
+            out.push(entry);
         }
         Ok(out)
     }
@@ -992,6 +1010,20 @@ impl BlockCtx<'_> {
             None => Ok(None),
             Some(bytes) => Ok(Some(bytes.to_vec())),
         }
+    }
+
+    /// Write a gateway registry entry.
+    pub fn set_gateway(&mut self, node_id: &NodeId, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_GATEWAYS)?;
+        self.batch.put_cf(cf, node_id.as_bytes(), data);
+        Ok(())
+    }
+
+    /// Delete a gateway registry entry.
+    pub fn delete_gateway(&mut self, node_id: &NodeId) -> Result<()> {
+        let cf = self.state.cf(CF_GATEWAYS)?;
+        self.batch.delete_cf(cf, node_id.as_bytes());
+        Ok(())
     }
 
     /// Write a model registry entry.

@@ -36,14 +36,22 @@ pub struct PendingReward {
     pub router_addr: Address,
     /// Treasury address.
     pub treasury_addr: Address,
-    /// Reward multiplier in basis points (10000 = 1.0x, 15000 = 1.5x).
-    /// TEE-verified jobs earn more from emission to incentivize
-    /// confidential inference.
+    /// TEE reward multiplier in basis points (10000 = 1.0x, 15000 = 1.5x).
+    /// TEE-verified jobs earn more from emission.
     #[serde(default = "default_tee_multiplier")]
     pub tee_multiplier_bps: u32,
+    /// HTTPS gateway reward multiplier (10000 = 1.0x, 12000 = 1.2x).
+    /// Jobs routed through HTTPS gateways earn more for the router.
+    #[serde(default = "default_https_multiplier")]
+    pub https_multiplier_bps: u32,
 }
 
 /// Default multiplier for backward-compatible deserialization.
 fn default_tee_multiplier() -> u32 {
     TEE_MULTIPLIER_NONE
+}
+
+/// Default HTTPS multiplier.
+fn default_https_multiplier() -> u32 {
+    crate::gateway_entry::HTTP_MULTIPLIER_BPS
 }

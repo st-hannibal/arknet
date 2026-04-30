@@ -289,8 +289,10 @@ fn epoch_boundary_mint(
             9_500,
         );
 
-        // TEE-verified jobs earn a multiplier on emission (1.5x at genesis).
-        let block_reward = base_reward * pr.tee_multiplier_bps as u128 / 10_000;
+        // TEE (1.5x) and HTTPS gateway (1.2x) multipliers stack.
+        let combined_mult =
+            (pr.tee_multiplier_bps as u128) * (pr.https_multiplier_bps as u128) / 10_000;
+        let block_reward = base_reward * combined_mult / 10_000;
 
         let minted = emission.try_mint(block_reward);
         if minted == 0 {

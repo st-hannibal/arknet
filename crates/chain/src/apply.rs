@@ -202,6 +202,13 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
             operator,
             capability,
         } => apply_register_tee(ctx, node_id, operator, capability),
+        Transaction::RegisterGateway {
+            node_id,
+            operator,
+            url,
+            https,
+        } => apply_register_gateway(ctx, node_id, operator, url, *https, height),
+        Transaction::UnregisterGateway { node_id, .. } => apply_unregister_gateway(ctx, node_id),
     }
 }
 
@@ -303,6 +310,7 @@ fn apply_receipt_batch(
                 router_addr,
                 treasury_addr: treasury,
                 tee_multiplier_bps: tee_mult,
+                https_multiplier_bps: crate::gateway_entry::HTTP_MULTIPLIER_BPS,
             };
             let pr_bytes = borsh::to_vec(&pr)
                 .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
@@ -464,6 +472,7 @@ fn apply_escrow_settle(
         router_addr: *router_addr,
         treasury_addr: *treasury_addr,
         tee_multiplier_bps: crate::pending_reward::TEE_MULTIPLIER_NONE,
+        https_multiplier_bps: crate::gateway_entry::HTTP_MULTIPLIER_BPS,
     };
     let pr_bytes = borsh::to_vec(&pending)
         .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
@@ -643,6 +652,63 @@ fn apply_register_tee(
 
     Ok(TxOutcome::Applied {
         gas_used: REGISTER_TEE_GAS,
+    })
+}
+
+/// Gas for gateway registration.
+pub const REGISTER_GATEWAY_GAS: Gas = 100_000;
+/// Gas for gateway unregistration.
+pub const UNREGISTER_GATEWAY_GAS: Gas = 50_000;
+
+/// Register a node as a public gateway.
+fn apply_register_gateway(
+    ctx: &mut BlockCtx<'_>,
+    node_id: &arknet_common::types::NodeId,
+    operator: &Address,
+    url: &str,
+    https: bool,
+    height: Height,
+) -> Result<TxOutcome> {
+    if url.is_empty() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "empty gateway URL",
+        )));
+    }
+    if url.len() > crate::gateway_entry::MAX_GATEWAY_URL_LEN {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "gateway URL too long",
+        )));
+    }
+    if https && !url.starts_with("https://") {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "https flag set but URL does not start with https://",
+        )));
+    }
+
+    let entry = crate::gateway_entry::GatewayEntry {
+        node_id: *node_id,
+        operator: *operator,
+        url: url.to_string(),
+        https,
+        registered_at: height,
+    };
+    let bytes =
+        borsh::to_vec(&entry).map_err(|e| ChainError::Codec(format!("gateway encode: {e}")))?;
+    ctx.set_gateway(node_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REGISTER_GATEWAY_GAS,
+    })
+}
+
+/// Remove a node from the gateway registry.
+fn apply_unregister_gateway(
+    ctx: &mut BlockCtx<'_>,
+    node_id: &arknet_common::types::NodeId,
+) -> Result<TxOutcome> {
+    ctx.delete_gateway(node_id)?;
+    Ok(TxOutcome::Applied {
+        gas_used: UNREGISTER_GATEWAY_GAS,
     })
 }
 

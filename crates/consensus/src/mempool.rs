@@ -383,6 +383,8 @@ fn extract_sender_nonce_fee(tx: &Transaction) -> Result<(Address, Nonce, Gas), M
         Transaction::GovProposal(p) => Ok((p.proposer, 0, 500_000)),
         Transaction::GovVote { voter, .. } => Ok((*voter, 0, 30_000)),
         Transaction::RegisterTeeCapability { operator, .. } => Ok((*operator, 0, 200_000)),
+        Transaction::RegisterGateway { operator, .. } => Ok((*operator, 0, 100_000)),
+        Transaction::UnregisterGateway { operator, .. } => Ok((*operator, 0, 50_000)),
     }
 }
 

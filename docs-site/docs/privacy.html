@@ -170,6 +170,46 @@ platform = "intel-tdx"</pre>
   <li><strong>Genesis-era attestation is structural.</strong> At genesis, TEE quote verification checks the quote structure and signature format. Full root-of-trust verification against Intel/AMD certificate authorities will be activated once the verification library is deployed and audited. This is a known gap documented in the security model.</li>
 </ul>
 
+<h2>HTTPS gateways: last-mile encryption</h2>
+<p>When you connect to a public gateway, the "last mile" between your device and the gateway can be observed by your ISP, wifi operator, or VPN provider. HTTPS protects this segment with TLS.</p>
+
+<table>
+  <tr><th>Connection</th><th>Last mile</th><th>P2P layer</th><th>Prompt content</th></tr>
+  <tr><td>HTTP gateway</td><td>Plaintext</td><td>Noise-encrypted</td><td>Visible to network observers on last mile</td></tr>
+  <tr><td>HTTPS gateway</td><td>TLS-encrypted</td><td>Noise-encrypted</td><td>Protected everywhere</td></tr>
+  <tr><td>HTTPS + TEE</td><td>TLS-encrypted</td><td>Noise-encrypted</td><td>Protected + enclave-encrypted</td></tr>
+</table>
+
+<h3>For users</h3>
+<pre>from openai import OpenAI
+
+client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
+response = client.chat.completions.create(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Private question"}],
+    extra_body={"require_https": True},  # only HTTPS gateways
+)</pre>
+<p>When <code>require_https</code> is set, the router only picks HTTPS gateways. No silent downgrade — if no HTTPS gateway is available, you get a clear error.</p>
+
+<h3>For operators</h3>
+<p>HTTPS gateways earn a <strong>1.2x reward multiplier</strong> on routed jobs. Setup:</p>
+<ol>
+  <li>Get a domain and a Let's Encrypt TLS certificate (free)</li>
+  <li>Configure a reverse proxy (nginx/caddy) to terminate TLS and forward to <code>localhost:26657</code></li>
+  <li>Register: <code>arknet gateway register --url https://rpc.mynode.com --https</code></li>
+</ol>
+<p>HTTPS + TEE multipliers stack: a job routed through an HTTPS gateway to a TEE node earns <strong>1.8x</strong> emission (1.2 x 1.5).</p>
+
+<h3>Gateway auto-discovery</h3>
+<p>SDKs can discover gateways automatically from the on-chain registry:</p>
+<pre># Python — auto-discover and connect
+from arknet import Client
+client = Client.connect(require_https=True)
+
+# TypeScript — auto-discover and connect
+const client = await ArknetClient.connect({ requireHttps: true });</pre>
+<p>No hardcoded URLs needed. The SDK contacts a seed node, reads <code>/v1/gateways</code>, and picks the best HTTPS gateway.</p>
+
 <h2>Full privacy: run your own node</h2>
 <p>For absolute privacy with zero trust required, run inference locally. No network interaction, no tokens spent, no prompts leaving your machine.</p>
 

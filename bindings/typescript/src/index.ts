@@ -41,6 +41,12 @@ export interface ChatCompletionRequest {
    * (no silent downgrade).
    */
   prefer_tee?: boolean;
+  /**
+   * arknet extension: route only through HTTPS gateways. Protects the
+   * last mile (user to gateway) with TLS. Rejected if no HTTPS gateway
+   * is available (no silent downgrade to HTTP).
+   */
+  require_https?: boolean;
 }
 
 export interface ChatCompletionResponse {
@@ -86,6 +92,8 @@ export interface ModelsResponse {
 
 // ─── Client ─────────────────────────────────────────────────────────
 
+const DEFAULT_SEEDS = ["https://api.arknet.arkengel.com"];
+
 export class ArknetClient {
   private baseUrl: string;
   private apiKey?: string;
@@ -93,6 +101,37 @@ export class ArknetClient {
   constructor(baseUrl: string, apiKey?: string) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.apiKey = apiKey;
+  }
+
+  /**
+   * Auto-discover a gateway from the on-chain registry.
+   * Contacts seed URLs, reads /v1/gateways, picks the best one.
+   */
+  static async connect(opts?: {
+    seeds?: string[];
+    requireHttps?: boolean;
+    apiKey?: string;
+  }): Promise<ArknetClient> {
+    const seeds = opts?.seeds ?? DEFAULT_SEEDS;
+    for (const seed of seeds) {
+      try {
+        const resp = await fetch(`${seed.replace(/\/+$/, "")}/v1/gateways`);
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        const gateways = (data.gateways ?? []) as Array<{
+          url: string;
+          https: boolean;
+        }>;
+        gateways.sort((a, b) => (b.https ? 1 : 0) - (a.https ? 1 : 0));
+        for (const gw of gateways) {
+          if (opts?.requireHttps && !gw.https) continue;
+          return new ArknetClient(gw.url, opts?.apiKey);
+        }
+      } catch {
+        continue;
+      }
+    }
+    throw new Error("no reachable gateway found");
   }
 
   private headers(): Record<string, string> {

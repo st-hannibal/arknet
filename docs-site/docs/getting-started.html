@@ -93,6 +93,13 @@ validator = true</pre>
 
 <div class="note">
 <p><strong>Want to run a public gateway?</strong> Change <code>rpc_listen</code> to <code>"0.0.0.0:26657"</code> in <code>node.toml</code>. Users can send inference requests through you and you earn the 5% router cut. This is how community gateways work — just a node with a public RPC.</p>
+<p>Register your gateway on-chain so SDKs discover it automatically. HTTPS gateways earn a <strong>1.2x reward multiplier</strong>:</p>
+<pre># HTTP gateway (any machine)
+arknet gateway register --url http://YOUR_IP:26657
+
+# HTTPS gateway (domain + TLS cert — 1.2x rewards)
+arknet gateway register --url https://rpc.mynode.com --https</pre>
+<p>See <a href="/docs/privacy.html">Privacy &amp; Security</a> for the full HTTPS vs HTTP comparison.</p>
 </div>
 
 <h2>Confidential inference (TEE)</h2>
