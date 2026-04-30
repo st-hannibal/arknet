@@ -88,8 +88,25 @@
   <li><strong>Uptime bonus</strong> — 1.1x for >95% uptime over 30 days</li>
 </ul>
 
+<h2>Bootstrap period</h2>
+<p>arknet launches with <strong>zero tokens in circulation</strong> (fair launch). To solve the chicken-and-egg problem, the chain starts in a bootstrap period:</p>
+<table>
+  <tr><th>Parameter</th><th>Value</th></tr>
+  <tr><td>Duration</td><td><strong>6 months</strong> (~15.5 million blocks)</td></tr>
+  <tr><td>Validator target</td><td><strong>100 unique validators</strong></td></tr>
+  <tr><td>Exit condition</td><td>Whichever comes <em>last</em> — both must be met</td></tr>
+  <tr><td>Min stake during bootstrap</td><td><strong>0</strong> — anyone can participate</td></tr>
+  <tr><td>Inference cost during bootstrap</td><td><strong>Free</strong> — rate-limited per wallet</td></tr>
+  <tr><td>ARK minted during bootstrap</td><td>~60,000,000 ARK from emission</td></tr>
+</table>
+<p>During bootstrap, compute nodes earn ARK from block emission for serving free inference requests. This bootstraps the token supply from zero — same model as early Bitcoin mining. By the end of bootstrap, there's enough ARK circulating for the paid economy to activate naturally.</p>
+
+<div class="note">
+<p><strong>No early-mover monopoly.</strong> The validator target is set to 100 (not 5 or 10) specifically to prevent one operator from spinning up many nodes and exiting bootstrap early. The 6-month floor ensures broad distribution regardless of how fast validators join.</p>
+</div>
+
 <h2>Staking</h2>
-<p>Every role requires stake (except during the bootstrap epoch):</p>
+<p>After bootstrap, every role requires stake:</p>
 <ul>
   <li><strong>Validators</strong> — secure consensus, earn block-production rewards</li>
   <li><strong>Compute nodes</strong> — stake proportional to model size served</li>
