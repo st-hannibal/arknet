@@ -262,7 +262,10 @@ version = "0.1.0"
 dependencies = [
  "arknet-chain",
  "arknet-common",
+ "borsh",
+ "serde",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -402,7 +405,11 @@ dependencies = [
  "arknet-chain",
  "arknet-common",
  "arknet-crypto",
+ "borsh",
+ "serde",
+ "tempfile",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -444,8 +451,10 @@ dependencies = [
 name = "arknet-rpc"
 version = "0.1.0"
 dependencies = [
+ "arknet-chain",
  "arknet-common",
  "axum",
+ "futures",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

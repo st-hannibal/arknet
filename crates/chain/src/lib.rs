@@ -41,7 +41,7 @@ pub mod unbonding;
 pub mod validator;
 
 pub use account::Account;
-pub use apply::{apply_tx, RejectReason, TxOutcome};
+pub use apply::{apply_tx, RejectReason, TxOutcome, MODEL_DEPOSIT, REGISTER_MODEL_GAS};
 pub use block::{check_block_size, receipt_root, tx_root, Block, BlockHeader, MAX_BLOCK_BYTES};
 pub use bootstrap::{
     in_bootstrap_epoch, BOOTSTRAP_MAX_BLOCKS, BOOTSTRAP_VALIDATOR_TARGET, EPOCH_LENGTH_BLOCKS,

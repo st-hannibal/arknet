@@ -187,9 +187,11 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
             router_addr,
             treasury_addr,
         ),
-        Transaction::RegisterModel { .. } => Ok(TxOutcome::Rejected(
-            RejectReason::NotYetImplemented("RegisterModel"),
-        )),
+        Transaction::RegisterModel {
+            manifest,
+            registrar,
+            deposit,
+        } => apply_register_model(ctx, manifest, registrar, *deposit),
         Transaction::GovProposal(p) => apply_gov_proposal(ctx, &tx.signer, p, height),
         Transaction::GovVote {
             proposal_id,
@@ -467,6 +469,54 @@ fn apply_reward_mint(
 /// `delegators` (5%) is TODO: pro-rata split across delegators of
 /// the compute node. For now it goes to the compute address as a
 /// simplification; Phase 2 wires the delegation registry.
+/// Gas for model registration.
+pub const REGISTER_MODEL_GAS: Gas = 200_000;
+/// Minimum deposit for model registration (10,000 ARK).
+pub const MODEL_DEPOSIT: Amount = 10_000 * 1_000_000_000;
+
+/// Register a model on-chain. Debits the deposit from the registrar,
+/// persists the manifest in CF_MODELS, and rejects duplicates.
+fn apply_register_model(
+    ctx: &mut BlockCtx<'_>,
+    manifest: &crate::transactions::OnChainModelManifest,
+    registrar: &Address,
+    deposit: Amount,
+) -> Result<TxOutcome> {
+    if deposit < MODEL_DEPOSIT {
+        return Ok(TxOutcome::Rejected(RejectReason::FeeTooLow {
+            min: MODEL_DEPOSIT as Gas,
+            got: deposit as Gas,
+        }));
+    }
+    if manifest.model_id.is_empty() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "empty model_id",
+        )));
+    }
+    if ctx.get_model(&manifest.model_id)?.is_some() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "model already registered",
+        )));
+    }
+    let mut acct = ctx.get_account(registrar)?.unwrap_or_default();
+    if acct.balance < deposit {
+        return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
+            have: acct.balance,
+            need: deposit,
+        }));
+    }
+    acct.balance -= deposit;
+    ctx.set_account(registrar, &acct)?;
+
+    let bytes =
+        borsh::to_vec(manifest).map_err(|e| ChainError::Codec(format!("model encode: {e}")))?;
+    ctx.set_model(&manifest.model_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REGISTER_MODEL_GAS,
+    })
+}
+
 /// Gas for governance proposal submission.
 pub const GOV_PROPOSAL_GAS: Gas = 500_000;
 /// Gas for governance vote.
@@ -887,5 +937,123 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(e.amount, 2_500);
+    }
+
+    fn sample_manifest() -> crate::transactions::OnChainModelManifest {
+        crate::transactions::OnChainModelManifest {
+            model_id: "meta-llama/Llama-3-8B".to_string(),
+            sha256: [0xab; 32],
+            size_bytes: 4_000_000_000,
+            mirrors: vec!["https://example.com/llama3.gguf".to_string()],
+            license: "Llama-3".to_string(),
+        }
+    }
+
+    #[test]
+    fn register_model_happy_path() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, MODEL_DEPOSIT + 1_000_000);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        let outcome = apply_tx(&mut ctx, &stx).unwrap();
+        assert_eq!(
+            outcome,
+            TxOutcome::Applied {
+                gas_used: REGISTER_MODEL_GAS
+            }
+        );
+        ctx.commit().unwrap();
+
+        let acct = state.get_account(&registrar).unwrap().unwrap();
+        assert_eq!(acct.balance, 1_000_000);
+
+        let model = state.get_model("meta-llama/Llama-3-8B").unwrap();
+        assert!(model.is_some());
+        assert_eq!(model.unwrap().size_bytes, 4_000_000_000);
+    }
+
+    #[test]
+    fn register_model_rejects_duplicate() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, MODEL_DEPOSIT * 3);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx).unwrap();
+        ctx.commit().unwrap();
+
+        let stx2 = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx2).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented("model already registered")) => {}
+            other => panic!("expected duplicate rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_model_rejects_insufficient_balance() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, 100);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::InsufficientBalance { .. }) => {}
+            other => panic!("expected insufficient balance, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_model_rejects_low_deposit() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, MODEL_DEPOSIT * 2);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: 100,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::FeeTooLow { .. }) => {}
+            other => panic!("expected low deposit rejection, got {other:?}"),
+        }
     }
 }
