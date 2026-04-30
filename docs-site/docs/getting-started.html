@@ -141,7 +141,7 @@ curl http://localhost:26657/v1/models</pre>
 <p>Once a compute node is serving models, any OpenAI client works:</p>
 <pre>from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:26657/v1", api_key="unused")
+client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
 resp = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello!"}],

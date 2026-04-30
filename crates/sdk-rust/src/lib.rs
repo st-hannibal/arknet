@@ -45,6 +45,7 @@ impl Client {
     ///
     /// `base_url` should be the node's HTTP root, e.g.
     /// `http://127.0.0.1:3000`. The client appends `/v1/...` paths.
+    /// Create a new client pointing at an arknet node.
     pub fn new(base_url: &str) -> Result<Self> {
         let base_url = base_url.trim_end_matches('/').to_string();
         let http = reqwest::Client::builder()
@@ -52,6 +53,54 @@ impl Client {
             .build()
             .map_err(|e| SdkError::Http(e.to_string()))?;
         Ok(Self { base_url, http })
+    }
+
+    /// Auto-discover a gateway from the on-chain registry.
+    ///
+    /// Contacts each seed URL's `/v1/gateways`, picks the best
+    /// reachable gateway (HTTPS preferred), and returns a connected client.
+    pub async fn connect(opts: ConnectOptions) -> Result<Self> {
+        let seeds = if opts.seeds.is_empty() {
+            vec!["https://api.arknet.arkengel.com".to_string()]
+        } else {
+            opts.seeds
+        };
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| SdkError::Http(e.to_string()))?;
+
+        for seed in &seeds {
+            let url = format!("{}/v1/gateways", seed.trim_end_matches('/'));
+            let resp = match http.get(&url).send().await {
+                Ok(r) if r.status().is_success() => r,
+                _ => continue,
+            };
+            let body: serde_json::Value = match resp.json().await {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let gateways = body["gateways"].as_array().cloned().unwrap_or_default();
+            // Sort HTTPS first.
+            let mut sorted = gateways;
+            sorted.sort_by_key(|g| {
+                if g["https"].as_bool() == Some(true) {
+                    0
+                } else {
+                    1
+                }
+            });
+            for gw in &sorted {
+                let is_https = gw["https"].as_bool() == Some(true);
+                if opts.require_https && !is_https {
+                    continue;
+                }
+                if let Some(gw_url) = gw["url"].as_str() {
+                    return Self::new(gw_url);
+                }
+            }
+        }
+        Err(SdkError::Http("no reachable gateway found".into()))
     }
 
     /// Non-streaming chat completion.
@@ -100,6 +149,15 @@ impl Client {
 
 // ─── Request / response types ───────────────────────────────────────
 
+/// Options for [`Client::connect`] auto-discovery.
+#[derive(Clone, Debug, Default)]
+pub struct ConnectOptions {
+    /// Seed URLs to discover gateways. Defaults to the arknet seed list.
+    pub seeds: Vec<String>,
+    /// Only connect to HTTPS gateways.
+    pub require_https: bool,
+}
+
 /// Chat completion request.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ChatRequest {
@@ -119,6 +177,12 @@ pub struct ChatRequest {
     /// Stop sequences.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+    /// Route only to TEE-capable nodes (confidential inference).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefer_tee: Option<bool>,
+    /// Route only through HTTPS gateways.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_https: Option<bool>,
 }
 
 /// A chat message.

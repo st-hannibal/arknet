@@ -111,24 +111,26 @@
 <h2>Using confidential inference</h2>
 <p>Set <code>prefer_tee=True</code> and the router will only dispatch your request to TEE-capable compute nodes.</p>
 
-<h3>OpenAI SDK (Python)</h3>
-<pre>from openai import OpenAI
-
-client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
-response = client.chat.completions.create(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Confidential question here"}],
-    extra_body={"prefer_tee": True},
-)</pre>
-
-<h3>arknet Python SDK</h3>
+<h3>arknet Python SDK (recommended)</h3>
 <pre>from arknet import Client
 
-client = Client("https://api.arknet.arkengel.com")
+# Auto-discovers HTTPS gateways from on-chain registry
+client = Client.connect(require_https=True)
 response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Confidential question here"}],
     prefer_tee=True,
+    require_https=True,
+)</pre>
+
+<h3>OpenAI SDK (any gateway)</h3>
+<pre>from openai import OpenAI
+
+client = OpenAI(base_url="https://any-gateway.example.com/v1", api_key="ark1...")  # your wallet address
+response = client.chat.completions.create(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Confidential question here"}],
+    extra_body={"prefer_tee": True, "require_https": True},
 )</pre>
 
 <div class="note">
@@ -181,13 +183,13 @@ platform = "intel-tdx"</pre>
 </table>
 
 <h3>For users</h3>
-<pre>from openai import OpenAI
+<pre>from arknet import Client
 
-client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
-response = client.chat.completions.create(
+client = Client.connect(require_https=True)  # auto-discover HTTPS gateway
+response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Private question"}],
-    extra_body={"require_https": True},  # only HTTPS gateways
+    require_https=True,  # only HTTPS gateways
 )</pre>
 <p>When <code>require_https</code> is set, the router only picks HTTPS gateways. No silent downgrade — if no HTTPS gateway is available, you get a clear error.</p>
 
