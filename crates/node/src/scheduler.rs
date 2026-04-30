@@ -52,12 +52,58 @@ impl FromStr for Role {
 }
 
 /// Drive the requested role. Returns when `shutdown` fires or the
-/// role body errors out. Phase 0 only implements `Compute`.
+/// role body errors out. Phase 0 only implements `Compute`. Phase 1
+/// Week 7-8 adds `Validator`; the consensus engine is booted by
+/// `cli::start` and the role body here just waits for shutdown (the
+/// engine's own tokio task already owns the loop).
 pub async fn run(role: Role, rt: NodeRuntime, shutdown: CancellationToken) -> Result<()> {
     match role {
-        Role::Compute => run_compute(rt, shutdown).await,
-        Role::Validator | Role::Router | Role::Verifier => {
-            Err(NodeError::RoleNotImplemented(role.to_string()))
+        Role::Compute => {
+            // Compute role gets a real body once a runner is attached.
+            // If none, fall back to the Phase-0 idle compute loop so
+            // the node still starts (compute scheduling without the
+            // L2 router stack is still useful for local CLI driving).
+            if rt.compute.is_some() {
+                crate::compute_role::run(rt, shutdown).await
+            } else {
+                run_compute(rt, shutdown).await
+            }
+        }
+        Role::Router => crate::router_role::run(rt, shutdown).await,
+        Role::Validator => run_validator(rt, shutdown).await,
+        Role::Verifier => crate::verifier_role::run(rt, shutdown).await,
+    }
+}
+
+/// Phase 1 Week 7-8 validator role.
+///
+/// The real work — the consensus engine — is already spawned by
+/// [`crate::cli::start::run`] before this function is called. Here we
+/// just park until shutdown while pushing a `current_height` gauge so
+/// `/metrics` reflects chain progress without the RPC layer polling.
+async fn run_validator(rt: NodeRuntime, shutdown: CancellationToken) -> Result<()> {
+    let Some(consensus) = rt.consensus.clone() else {
+        return Err(NodeError::Config(
+            "validator role requires a ConsensusHandle — consensus engine did not boot".into(),
+        ));
+    };
+
+    info!("validator role online — awaiting shutdown");
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+    tick.tick().await; // skip the immediate fire
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                match consensus.current_height().await {
+                    Ok(h) => metrics::gauge!("arknet_consensus_height").set(h.0 as f64),
+                    Err(e) => tracing::warn!(error = %e, "failed to read consensus height"),
+                }
+            }
+            _ = shutdown.cancelled() => {
+                info!("validator role shutting down cleanly");
+                return Ok(());
+            }
         }
     }
 }
@@ -116,7 +162,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_compute_roles_error_cleanly() {
+    async fn verifier_role_without_consensus_errors() {
+        // Verifier now has a real body but requires a consensus handle
+        // (for block events + dispute submission). Without one it
+        // returns Config error.
         let tmp = tempfile::tempdir().unwrap();
         let cfg = arknet_common::config::NodeConfig::default();
         let rt = NodeRuntime::open(tmp.path().to_path_buf(), cfg)
@@ -124,10 +173,32 @@ mod tests {
             .unwrap();
         let shutdown = CancellationToken::new();
 
-        for role in [Role::Validator, Role::Router, Role::Verifier] {
-            let err = run(role, rt.clone(), shutdown.clone()).await.unwrap_err();
-            assert!(matches!(err, NodeError::RoleNotImplemented(_)));
-        }
+        let err = run(Role::Verifier, rt, shutdown).await.unwrap_err();
+        assert!(matches!(err, NodeError::Config(_)));
+    }
+
+    #[tokio::test]
+    async fn router_role_without_handle_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = arknet_common::config::NodeConfig::default();
+        let rt = NodeRuntime::open(tmp.path().to_path_buf(), cfg)
+            .await
+            .unwrap();
+        let shutdown = CancellationToken::new();
+        let err = run(Role::Router, rt, shutdown).await.unwrap_err();
+        assert!(matches!(err, NodeError::Config(_)));
+    }
+
+    #[tokio::test]
+    async fn validator_without_consensus_handle_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = arknet_common::config::NodeConfig::default();
+        let rt = NodeRuntime::open(tmp.path().to_path_buf(), cfg)
+            .await
+            .unwrap();
+        let shutdown = CancellationToken::new();
+        let err = run(Role::Validator, rt, shutdown).await.unwrap_err();
+        assert!(matches!(err, NodeError::Config(_)));
     }
 
     #[tokio::test]

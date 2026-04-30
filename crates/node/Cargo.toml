@@ -34,6 +34,7 @@ clap                 = { workspace = true }
 tokio                = { workspace = true }
 tokio-util           = { workspace = true }
 tokio-stream         = "0.1"
+borsh                = { workspace = true }
 figment              = { workspace = true }
 serde                = { workspace = true }
 serde_json           = { workspace = true }
@@ -70,6 +71,10 @@ reqwest              = { workspace = true, features = ["json"] }
 # Encoding helpers used by model-cmd (digest hex parse/print, URL parse)
 hex                  = { workspace = true }
 url                  = "2.5"
+
+# Async helper traits used by the in-process router ↔ compute dispatcher
+async-trait          = { workspace = true }
+blake3               = { workspace = true }
 
 [dev-dependencies]
 tempfile             = "3.10"

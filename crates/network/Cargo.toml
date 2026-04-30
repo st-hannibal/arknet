@@ -10,7 +10,24 @@ description   = "P2P networking layer for arknet: libp2p transport, gossip, DHT,
 [dependencies]
 arknet-common  = { workspace = true }
 arknet-crypto  = { workspace = true }
+
 tokio          = { workspace = true }
+tokio-util     = { workspace = true }
+futures        = { workspace = true }
+async-trait    = { workspace = true }
+
+borsh          = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+hex            = { workspace = true }
+
 tracing        = { workspace = true }
 thiserror      = { workspace = true }
-# libp2p is added when Phase 1 begins (Week ~17); omitted here to keep the scaffold lean.
+parking_lot    = { workspace = true }
+
+libp2p         = { workspace = true }
+
+[dev-dependencies]
+tempfile       = "3.10"
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tracing-subscriber = { workspace = true }

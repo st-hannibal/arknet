@@ -35,6 +35,10 @@ pub enum InferenceError {
     #[error("not implemented: {0}")]
     NotImplemented(&'static str),
 
+    /// KV-cache checkpoint save/restore failure.
+    #[error("checkpoint: {0}")]
+    Checkpoint(String),
+
     /// Underlying model-manager error while resolving / pulling a model.
     #[error("model manager: {0}")]
     ModelManager(#[from] arknet_model_manager::ModelError),

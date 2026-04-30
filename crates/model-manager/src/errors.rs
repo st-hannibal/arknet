@@ -72,4 +72,10 @@ pub enum ModelError {
     /// Cache configuration or state invariant was violated.
     #[error("cache: {0}")]
     Cache(String),
+
+    /// Encoding / decoding failure (TOML, Borsh, etc.). Used for genesis
+    /// registry seed parsing where an invalid fixture is a code-review
+    /// mistake, not a runtime condition.
+    #[error("codec: {0}")]
+    Codec(String),
 }

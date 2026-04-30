@@ -10,5 +10,10 @@ description   = "Inference receipt aggregation, Merkle batching, and L1 anchorin
 [dependencies]
 arknet-common   = { workspace = true }
 arknet-crypto   = { workspace = true }
+arknet-chain    = { workspace = true }
 borsh           = { workspace = true }
+blake3          = { workspace = true }
 thiserror       = { workspace = true }
+
+[dev-dependencies]
+tempfile        = "3.10"

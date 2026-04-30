@@ -10,6 +10,51 @@ description   = "L1 consensus engine for arknet (Tendermint BFT via malachite)."
 [dependencies]
 arknet-common  = { workspace = true }
 arknet-crypto  = { workspace = true }
+arknet-chain   = { workspace = true }
+arknet-network = { workspace = true }
+arknet-staking = { workspace = true }
+
 tokio          = { workspace = true }
+tokio-util     = { workspace = true }
+futures        = { workspace = true }
+async-trait    = { workspace = true }
+
+borsh          = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+hex            = { workspace = true }
+parking_lot    = { workspace = true }
+
 tracing        = { workspace = true }
 thiserror      = { workspace = true }
+blake3         = { workspace = true }
+metrics        = { workspace = true }
+
+# Malachite BFT — raw consensus core + driver only, no engine/network.
+# We bridge to our own `arknet-network` libp2p stack explicitly so this
+# crate does not drag in a conflicting libp2p version transitively.
+# See docs/PROGRESS 2026-04-28 Week 7-8 for the dep-spike rationale.
+#
+# Renamed with `package = …` (upstream's convention) so call sites use
+# the short `malachitebft_core_types::…` path.
+malachitebft-core-consensus = { package = "informalsystems-malachitebft-core-consensus", version = "0.5.0" }
+malachitebft-core-driver    = { package = "informalsystems-malachitebft-core-driver",    version = "0.5.0" }
+malachitebft-core-types     = { package = "informalsystems-malachitebft-core-types",     version = "0.5.0", features = ["borsh", "serde"] }
+malachitebft-core-votekeeper = { package = "informalsystems-malachitebft-core-votekeeper", version = "0.5.0" }
+malachitebft-signing-ed25519 = { package = "informalsystems-malachitebft-signing-ed25519", version = "0.5.0", features = ["rand"] }
+malachitebft-metrics        = { package = "informalsystems-malachitebft-metrics",        version = "0.5.0" }
+
+[features]
+# Enables the multi-node integration tests. Gated off by default
+# because they stand up real QUIC listeners and can be slow in CI.
+# Run with: `cargo test -p arknet-consensus --features integration-tests --test four_node_bft`.
+integration-tests = []
+
+[dev-dependencies]
+tempfile       = "3.10"
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tracing-subscriber = { workspace = true }
+# rand 0.8 (workspace-pinned to 0.8.6) is needed to drive malachite's
+# `Ed25519::generate_keypair` in tests. Aligned with the rest of the
+# crate's crypto audit inventory.
+rand           = { workspace = true }

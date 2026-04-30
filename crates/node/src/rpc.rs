@@ -87,9 +87,12 @@ pub async fn serve(bind: SocketAddr, state: RpcState, shutdown: CancellationToke
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/peers", get(list_peers))
         .route("/v1/models", get(list_models))
         .route("/v1/models/load", post(load_model))
         .route("/v1/inference", post(infer))
+        .route("/v1/status", get(status))
+        .route("/v1/tx", post(submit_tx))
         .with_state(state);
 
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
@@ -118,6 +121,36 @@ async fn health(State(state): State<RpcState>) -> Json<HealthResponse> {
         status: "ok",
         uptime_seconds: state.started.elapsed().as_secs_f64(),
         version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+// ─── /peers ──────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct PeersResponse {
+    /// Our own libp2p peer id (helpful when wiring up a test cluster).
+    local_peer_id: Option<String>,
+    /// Currently-connected peer ids.
+    connected: Vec<String>,
+}
+
+async fn list_peers(State(state): State<RpcState>) -> Json<PeersResponse> {
+    let Some(net) = state.runtime.network.as_ref() else {
+        return Json(PeersResponse {
+            local_peer_id: None,
+            connected: Vec::new(),
+        });
+    };
+    let connected = match net.connected_peers().await {
+        Ok(peers) => peers.into_iter().map(|p| p.to_string()).collect(),
+        Err(e) => {
+            warn!(error = %e, "failed to query connected peers");
+            Vec::new()
+        }
+    };
+    Json(PeersResponse {
+        local_peer_id: Some(net.local_peer_id().to_string()),
+        connected,
     })
 }
 
@@ -321,6 +354,10 @@ async fn temp_runtime_with_manifest(
         model_manager,
         inference,
         data_dir: state.runtime.data_dir.clone(),
+        network: state.runtime.network.clone(),
+        consensus: state.runtime.consensus.clone(),
+        router: state.runtime.router.clone(),
+        compute: state.runtime.compute.clone(),
     })
 }
 
@@ -382,6 +419,87 @@ fn http_error(e: NodeError) -> (StatusCode, Json<ErrorBody>) {
             error: e.to_string(),
         }),
     )
+}
+
+// ─── /v1/status ──────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct StatusResponse {
+    chain_id: String,
+    height: Option<u64>,
+    peer_count: Option<usize>,
+    consensus_running: bool,
+}
+
+async fn status(State(state): State<RpcState>) -> Json<StatusResponse> {
+    let chain_id = state.runtime.cfg.node.network.clone();
+    let height = match state.runtime.consensus.as_ref() {
+        Some(h) => h.current_height().await.ok().map(|h| h.0),
+        None => None,
+    };
+    let peer_count = match state.runtime.network.as_ref() {
+        Some(n) => n.connected_peers().await.ok().map(|p| p.len()),
+        None => None,
+    };
+    Json(StatusResponse {
+        chain_id,
+        height,
+        peer_count,
+        consensus_running: state.runtime.consensus.is_some(),
+    })
+}
+
+// ─── /v1/tx ──────────────────────────────────────────────────────────
+
+/// Raw request body: hex-encoded borsh bytes of a
+/// [`arknet_chain::SignedTransaction`]. Keeping it hex-encoded on the
+/// wire lets operators paste signed blobs from the CLI; a binary
+/// endpoint ships in Phase 2 alongside the full OpenAI-compat surface.
+#[derive(Deserialize)]
+struct SubmitTxRequest {
+    tx_hex: String,
+}
+
+#[derive(Serialize)]
+struct SubmitTxResponse {
+    tx_hash_hex: String,
+}
+
+async fn submit_tx(
+    State(state): State<RpcState>,
+    Json(req): Json<SubmitTxRequest>,
+) -> std::result::Result<Json<SubmitTxResponse>, (StatusCode, Json<ErrorBody>)> {
+    let Some(consensus) = state.runtime.consensus.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                error: "consensus engine not running on this node".into(),
+            }),
+        ));
+    };
+    let clean = req.tx_hex.strip_prefix("0x").unwrap_or(&req.tx_hex);
+    let bytes = hex::decode(clean).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorBody {
+                error: format!("tx_hex: {e}"),
+            }),
+        )
+    })?;
+    let tx: arknet_chain::SignedTransaction = borsh::from_slice(&bytes).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorBody {
+                error: format!("tx decode: {e}"),
+            }),
+        )
+    })?;
+    match consensus.submit_tx(tx).await {
+        Ok(hash) => Ok(Json(SubmitTxResponse {
+            tx_hash_hex: hex::encode(hash.as_bytes()),
+        })),
+        Err(msg) => Err((StatusCode::BAD_REQUEST, Json(ErrorBody { error: msg }))),
+    }
 }
 
 // `StopReason` is referenced to keep it in scope for downstream

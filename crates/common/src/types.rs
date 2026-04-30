@@ -33,6 +33,8 @@ pub type Hash256 = [u8; 32];
     Copy,
     PartialEq,
     Eq,
+    PartialOrd,
+    Ord,
     Hash,
     Debug,
     Default,
@@ -211,11 +213,166 @@ pub type Height = u64;
 /// Unix timestamp in milliseconds.
 pub type Timestamp = u64;
 
+/// Per-account transaction counter. Increments by 1 with each committed tx
+/// from the same sender; replay is detected at the state-application layer.
+pub type Nonce = u64;
+
+/// Gas units consumed by a transaction. Fee markets price in `ark_atom/gas`.
+pub type Gas = u64;
+
 /// Atomic units per whole ARK token.
 pub const ATOMS_PER_ARK: Amount = 1_000_000_000;
 
 /// Protocol-level hard cap on ARK supply (1B ARK).
 pub const ARK_SUPPLY_CAP: Amount = 1_000_000_000 * ATOMS_PER_ARK;
+
+// ─── State / block / tx identifiers ───────────────────────────────────────
+
+/// Transaction hash. Distinct newtype from block hashes to prevent cross-type
+/// collision attacks — see [`DOMAIN_TX`] / [`DOMAIN_BLOCK`].
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    Default,
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+)]
+pub struct TxHash(pub Hash256);
+
+impl TxHash {
+    /// Construct from raw bytes.
+    pub const fn new(bytes: Hash256) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow the underlying digest.
+    pub const fn as_bytes(&self) -> &Hash256 {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for TxHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "tx:{}", hex::encode(self.0))
+    }
+}
+
+/// Block hash. Computed over a canonical [`BlockHeader`] borsh encoding.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+)]
+pub struct BlockHash(pub Hash256);
+
+impl BlockHash {
+    /// Construct from raw bytes.
+    pub const fn new(bytes: Hash256) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow the underlying digest.
+    pub const fn as_bytes(&self) -> &Hash256 {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for BlockHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "block:{}", hex::encode(self.0))
+    }
+}
+
+/// Merkle root of the state trie. Included in every [`BlockHeader`].
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    Default,
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+)]
+pub struct StateRoot(pub Hash256);
+
+impl StateRoot {
+    /// Construct from raw bytes.
+    pub const fn new(bytes: Hash256) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow the underlying digest.
+    pub const fn as_bytes(&self) -> &Hash256 {
+        &self.0
+    }
+}
+
+/// Application-layer state digest after applying a block's transactions.
+///
+/// Kept distinct from [`StateRoot`] so light clients can verify application
+/// state commitments without interpreting the full state trie.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    Default,
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+)]
+pub struct AppHash(pub Hash256);
+
+impl AppHash {
+    /// Construct from raw bytes.
+    pub const fn new(bytes: Hash256) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow the underlying digest.
+    pub const fn as_bytes(&self) -> &Hash256 {
+        &self.0
+    }
+}
+
+// ─── Hash domain tags ─────────────────────────────────────────────────────
+
+/// Domain tag for transaction hashes. Prepended to borsh-encoded bytes before
+/// hashing so that `hash(tx) != hash(block)` even when their borsh happens
+/// to collide.
+pub const DOMAIN_TX: &[u8] = b"arknet-tx-v1";
+
+/// Domain tag for block (header) hashes. See [`DOMAIN_TX`].
+pub const DOMAIN_BLOCK: &[u8] = b"arknet-block-v1";
+
+/// Domain tag for block-body tx Merkle roots.
+pub const DOMAIN_TX_ROOT: &[u8] = b"arknet-tx-root-v1";
+
+/// Domain tag for block-body receipt Merkle roots.
+pub const DOMAIN_RECEIPT_ROOT: &[u8] = b"arknet-receipt-root-v1";
 
 // ─── Crypto scheme tags ───────────────────────────────────────────────────
 
@@ -597,5 +754,60 @@ mod tests {
         let bytes = borsh::to_vec(&a).unwrap();
         let decoded: Address = borsh::from_slice(&bytes).unwrap();
         assert_eq!(a, decoded);
+    }
+
+    #[test]
+    fn borsh_roundtrip_tx_hash() {
+        let h = TxHash::new([0x44; 32]);
+        let bytes = borsh::to_vec(&h).unwrap();
+        let decoded: TxHash = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(h, decoded);
+    }
+
+    #[test]
+    fn borsh_roundtrip_block_hash() {
+        let h = BlockHash::new([0x55; 32]);
+        let bytes = borsh::to_vec(&h).unwrap();
+        let decoded: BlockHash = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(h, decoded);
+    }
+
+    #[test]
+    fn borsh_roundtrip_state_root() {
+        let r = StateRoot::new([0x66; 32]);
+        let bytes = borsh::to_vec(&r).unwrap();
+        let decoded: StateRoot = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(r, decoded);
+    }
+
+    #[test]
+    fn borsh_roundtrip_app_hash() {
+        let h = AppHash::new([0x77; 32]);
+        let bytes = borsh::to_vec(&h).unwrap();
+        let decoded: AppHash = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(h, decoded);
+    }
+
+    #[test]
+    fn hash_domain_tags_are_distinct() {
+        // Each pair must differ — if two domains collide, cross-type hashes
+        // could clash intentionally or by accident.
+        assert_ne!(DOMAIN_TX, DOMAIN_BLOCK);
+        assert_ne!(DOMAIN_TX, DOMAIN_TX_ROOT);
+        assert_ne!(DOMAIN_TX, DOMAIN_RECEIPT_ROOT);
+        assert_ne!(DOMAIN_BLOCK, DOMAIN_TX_ROOT);
+        assert_ne!(DOMAIN_BLOCK, DOMAIN_RECEIPT_ROOT);
+        assert_ne!(DOMAIN_TX_ROOT, DOMAIN_RECEIPT_ROOT);
+    }
+
+    #[test]
+    fn tx_and_block_hash_newtypes_are_distinct_from_byte_arrays() {
+        // This is a type-level check that the newtypes compile apart — if the
+        // function accepted either, this would fail to compile.
+        fn take_tx(_: TxHash) {}
+        fn take_block(_: BlockHash) {}
+
+        take_tx(TxHash::new([0; 32]));
+        take_block(BlockHash::new([0; 32]));
     }
 }

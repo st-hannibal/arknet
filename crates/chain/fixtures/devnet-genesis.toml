@@ -1,0 +1,41 @@
+# arknet devnet genesis (Phase 1).
+#
+# Fair-launch invariant: initial_accounts is intentionally absent.
+# The chain starts with total_supply = 0; all ARK is minted post-genesis
+# against verified inference work.
+#
+# The four validators are placeholder Ed25519 pubkeys; replace before any
+# real devnet run.
+
+chain_id = "arknet-devnet-1"
+initial_height = 0
+initial_timestamp_ms = 1_700_000_000_000
+
+[[validators]]
+name = "devnet-v1"
+pubkey_hex = "1111111111111111111111111111111111111111111111111111111111111111"
+operator_hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+voting_power = 1
+
+[[validators]]
+name = "devnet-v2"
+pubkey_hex = "2222222222222222222222222222222222222222222222222222222222222222"
+operator_hex = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+voting_power = 1
+
+[[validators]]
+name = "devnet-v3"
+pubkey_hex = "3333333333333333333333333333333333333333333333333333333333333333"
+operator_hex = "0xcccccccccccccccccccccccccccccccccccccccc"
+voting_power = 1
+
+[[validators]]
+name = "devnet-v4"
+pubkey_hex = "4444444444444444444444444444444444444444444444444444444444444444"
+operator_hex = "0xdddddddddddddddddddddddddddddddddddddddd"
+voting_power = 1
+
+[params]
+base_fee   = 1_000_000_000
+gas_target = 15_000_000
+gas_limit  = 30_000_000

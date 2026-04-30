@@ -338,13 +338,16 @@ mystery_field = 42
     }
 
     /// Minimal inline `tempdir` to avoid pulling the `tempfile` crate into `arknet-common`.
+    ///
+    /// Uniqueness combines pid + a monotonic counter — nanos alone collide
+    /// when two parallel tests reach this helper in the same tick on fast
+    /// runners (macOS hit this on CI).
     fn tempdir() -> TempDir {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let pid = std::process::id();
         let mut base = std::env::temp_dir();
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        base.push(format!("arknet-test-{nanos}"));
+        base.push(format!("arknet-test-{pid}-{seq}"));
         std::fs::create_dir_all(&base).unwrap();
         TempDir { path: base }
     }
