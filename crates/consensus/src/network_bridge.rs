@@ -310,6 +310,7 @@ mod tests {
                 proposer: NodeId::new([0; 32]),
                 validator_set_hash: [0; 32],
                 base_fee: 1_000_000_000,
+                genesis_message: String::new(),
             },
             txs: Vec::new(),
             receipts: Vec::new(),

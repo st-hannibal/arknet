@@ -27,6 +27,10 @@ pub const BASE_FEE_MAX_CHANGE_DENOM: u128 = 8;
 /// function of fees entirely).
 pub const MIN_BASE_FEE: Amount = 1;
 
+/// Target gas per block (half of the block gas limit in EIP-1559).
+/// Set to 15M gas — matches Ethereum mainnet's target.
+pub const TARGET_GAS_PER_BLOCK: Gas = 15_000_000;
+
 /// Compute the next block's base fee from the parent block's state.
 ///
 /// * `parent_base_fee` — base fee of block N-1.

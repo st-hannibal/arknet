@@ -54,4 +54,4 @@ pub use peer::{PeerBook, PeerRecord};
 
 // Re-export the core libp2p types a caller needs without forcing them
 // to add libp2p as a direct dependency.
-pub use libp2p::{identity::Keypair, Multiaddr, PeerId};
+pub use libp2p::{identity, identity::Keypair, Multiaddr, PeerId};

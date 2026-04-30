@@ -30,9 +30,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use arknet_chain::apply::{apply_tx, TxOutcome};
 use arknet_chain::block::{receipt_root, tx_root, Block, BlockHeader};
+use arknet_chain::state::BlockCtx;
 use arknet_chain::transactions::SignedTransaction;
 use arknet_chain::State;
-use arknet_common::types::{Amount, BlockHash, Gas, Hash256, NodeId};
+use arknet_common::types::{Amount, BlockHash, Gas, Hash256, Height as ChainHeight, NodeId};
 use malachitebft_core_types::Height as MalachiteHeight;
 
 use crate::errors::{ConsensusError, Result};
@@ -78,6 +79,8 @@ pub struct BuildParams {
     pub gas_limit: Gas,
     /// Block body byte budget.
     pub bytes_budget: usize,
+    /// Genesis coinbase message (non-empty only at height 1).
+    pub genesis_message: String,
 }
 
 /// Proposer-side block construction helper.
@@ -120,6 +123,11 @@ impl BlockBuilder {
             }
         }
 
+        // Proposer-injected escrow refunds: scan for timed-out
+        // escrows and credit the user. This runs inside the proposer's
+        // ctx so the refunds are part of the state root.
+        refund_expired_escrows(&mut ctx, height.as_u64());
+
         let state_root = ctx.preview_state_root()?;
         let tx_root_val = tx_root(&tx_hashes);
         let receipt_root_val = receipt_root(&[]); // Phase 1 Week 7-8: empty receipts
@@ -143,6 +151,7 @@ impl BlockBuilder {
             proposer: params.proposer,
             validator_set_hash: params.validator_set_hash,
             base_fee: params.base_fee,
+            genesis_message: params.genesis_message,
         };
         let block = Block {
             header,
@@ -151,6 +160,64 @@ impl BlockBuilder {
         };
 
         Ok(BuiltBlock { block, drained })
+    }
+}
+
+/// Scan for escrows that have timed out and credit the locked amount
+/// back to the user. Called by the block proposer during block
+/// construction — refunds are part of the proposed state root.
+///
+/// This is a best-effort scan: it iterates all escrows in the DB
+/// (Phase 2 can add an expiry index for efficiency). Escrows in
+/// `Locked` state whose `created_at + TIMEOUT` < current height
+/// are settled as refunds.
+fn refund_expired_escrows(ctx: &mut BlockCtx<'_>, height: ChainHeight) {
+    let timeout = arknet_chain::ESCROW_TIMEOUT_BLOCKS;
+
+    // Read all escrow entries from committed state. We can't iterate
+    // through the BlockCtx overlay, so we go through the underlying
+    // state and check each one.
+    let state = ctx.state();
+    let cf_escrows = match state.iter_escrows() {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to scan escrows for refunds");
+            return;
+        }
+    };
+
+    for (job_id, entry_bytes) in cf_escrows {
+        let entry: arknet_chain::escrow_entry::EscrowEntry = match borsh::from_slice(&entry_bytes) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if entry.state != arknet_chain::escrow_entry::EscrowState::Locked {
+            continue;
+        }
+        if entry.created_at.saturating_add(timeout) > height {
+            continue;
+        }
+
+        // Refund: credit the user's balance and mark escrow as refunded.
+        let mut acct = ctx
+            .get_account(&entry.user)
+            .unwrap_or(None)
+            .unwrap_or_default();
+        acct.balance = acct.balance.saturating_add(entry.amount);
+        if let Err(e) = ctx.set_account(&entry.user, &acct) {
+            tracing::warn!(error = %e, "escrow refund: set_account failed");
+            continue;
+        }
+        if let Err(e) = ctx.delete_escrow(&job_id) {
+            tracing::warn!(error = %e, "escrow refund: delete_escrow failed");
+        }
+        tracing::info!(
+            job_id = ?job_id,
+            user = ?entry.user,
+            amount = entry.amount,
+            "refunded expired escrow"
+        );
+        metrics::counter!("arknet_escrow_refunds_total").increment(1);
     }
 }
 
@@ -215,6 +282,7 @@ mod tests {
             base_fee: 1_000_000_000,
             gas_limit: DEFAULT_BLOCK_GAS_LIMIT,
             bytes_budget: DEFAULT_BLOCK_BYTES_BUDGET,
+            genesis_message: String::new(),
         }
     }
 

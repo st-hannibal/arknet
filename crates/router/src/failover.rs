@@ -173,6 +173,8 @@ mod tests {
             timestamp_ms: 0,
             user_pubkey: PubKey::ed25519([0; 32]),
             signature: Signature::ed25519([0; 64]),
+            prefer_tee: false,
+            encrypted_prompt: None,
         }
     }
 
@@ -184,6 +186,7 @@ mod tests {
             model_refs: vec!["local/stories260K".into()],
             last_seen_ms: 0,
             dispatcher,
+            supports_tee: false,
         }
     }
 

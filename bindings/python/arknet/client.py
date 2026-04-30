@@ -38,8 +38,17 @@ class Client:
         temperature: float = 1.0,
         stream: bool = False,
         stop: Optional[List[str]] = None,
+        prefer_tee: bool = False,
     ) -> Dict[str, Any]:
         """Non-streaming chat completion.
+
+        Parameters
+        ----------
+        prefer_tee:
+            Route only to TEE-capable nodes for confidential inference.
+            Prompts are encrypted to the enclave's public key — the host
+            OS never sees plaintext. Rejected if no TEE node is available
+            (no silent downgrade).
 
         Returns the full OpenAI-shaped response dict.
         """
@@ -52,6 +61,8 @@ class Client:
         }
         if stop:
             body["stop"] = stop
+        if prefer_tee:
+            body["prefer_tee"] = True
         return self._post("/v1/chat/completions", body)
 
     def chat_completion_stream(
@@ -61,8 +72,15 @@ class Client:
         max_tokens: int = 256,
         temperature: float = 1.0,
         stop: Optional[List[str]] = None,
+        prefer_tee: bool = False,
     ) -> Iterator[Dict[str, Any]]:
-        """Streaming chat completion — yields SSE chunks as dicts."""
+        """Streaming chat completion — yields SSE chunks as dicts.
+
+        Parameters
+        ----------
+        prefer_tee:
+            Route only to TEE-capable nodes. See :meth:`chat_completion`.
+        """
         body = {
             "model": model,
             "messages": messages,
@@ -72,6 +90,8 @@ class Client:
         }
         if stop:
             body["stop"] = stop
+        if prefer_tee:
+            body["prefer_tee"] = True
         return self._post_stream("/v1/chat/completions", body)
 
     def list_models(self) -> Dict[str, Any]:

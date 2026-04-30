@@ -30,7 +30,7 @@ use sparse_merkle_tree::{
     blake2b::Blake2bHasher, default_store::DefaultStore, traits::Value, SparseMerkleTree, H256,
 };
 
-use arknet_common::types::{Address, Height, JobId, NodeId, StateRoot};
+use arknet_common::types::{Address, Amount, Height, JobId, NodeId, StateRoot};
 
 use crate::account::Account;
 use crate::errors::{ChainError, Result};
@@ -64,6 +64,9 @@ const CF_VOTES: &str = "votes";
 /// On-chain model registry keyed by `model_id` (UTF-8 string bytes).
 /// Value: borsh-encoded `OnChainModelManifest`.
 const CF_MODELS: &str = "models";
+/// TEE capability registry keyed by `node_id` (32 bytes).
+/// Value: borsh-encoded `TeeCapability`.
+const CF_TEE: &str = "tee";
 
 // ─── Value wrapper for SMT account leaves ─────────────────────────────────
 
@@ -151,6 +154,7 @@ fn unbond_key(node_id: &NodeId, unbond_id: u64) -> Vec<u8> {
 // Meta keys (single-row values under `CF_META`).
 const META_NEXT_UNBOND_ID: &[u8] = b"next_unbond_id";
 const META_CURRENT_HEIGHT: &[u8] = b"current_height";
+const META_BASE_FEE: &[u8] = b"base_fee";
 
 // ─── State handle ─────────────────────────────────────────────────────────
 
@@ -184,6 +188,7 @@ impl State {
             CF_PROPOSALS,
             CF_VOTES,
             CF_MODELS,
+            CF_TEE,
         ]
         .iter()
         .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
@@ -386,6 +391,30 @@ impl State {
         }
     }
 
+    /// Read the current EIP-1559 base fee from META. Defaults to 1
+    /// (1 ark_atom per gas) on a fresh chain.
+    pub fn base_fee(&self) -> Result<Amount> {
+        let cf = self.cf(CF_META)?;
+        match self
+            .db
+            .get_cf(cf, META_BASE_FEE)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get: {e}")))?
+        {
+            None => Ok(1),
+            Some(bytes) => {
+                if bytes.len() != 16 {
+                    return Err(ChainError::Codec(format!(
+                        "base_fee expected 16 bytes, got {}",
+                        bytes.len()
+                    )));
+                }
+                let mut arr = [0u8; 16];
+                arr.copy_from_slice(&bytes);
+                Ok(u128::from_be_bytes(arr))
+            }
+        }
+    }
+
     /// Read the monotonic unbonding-id counter.
     pub fn next_unbond_id(&self) -> Result<u64> {
         let cf = self.cf(CF_META)?;
@@ -446,6 +475,23 @@ impl State {
         }
     }
 
+    /// Iterate all escrow entries. Used by the block proposer to
+    /// scan for expired escrows that need refunding.
+    pub fn iter_escrows(&self) -> Result<Vec<(arknet_common::types::JobId, Vec<u8>)>> {
+        let cf = self.cf(CF_ESCROWS)?;
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (k, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter escrows: {e}")))?;
+            if k.len() != 32 {
+                continue;
+            }
+            let mut job_bytes = [0u8; 32];
+            job_bytes.copy_from_slice(&k);
+            out.push((arknet_common::types::JobId::new(job_bytes), v.to_vec()));
+        }
+        Ok(out)
+    }
+
     /// Look up a registered model by `model_id` string.
     pub fn get_model(
         &self,
@@ -478,6 +524,127 @@ impl State {
             out.push(m);
         }
         Ok(out)
+    }
+
+    /// Look up a node's TEE capability by node id.
+    pub fn get_tee_capability(
+        &self,
+        node_id: &NodeId,
+    ) -> Result<Option<arknet_common::types::TeeCapability>> {
+        let cf = self.cf(CF_TEE)?;
+        match self
+            .db
+            .get_cf(cf, node_id.as_bytes())
+            .map_err(|e| ChainError::Codec(format!("rocksdb get tee: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => {
+                let cap: arknet_common::types::TeeCapability = borsh::from_slice(&bytes)
+                    .map_err(|e| ChainError::Codec(format!("tee decode: {e}")))?;
+                Ok(Some(cap))
+            }
+        }
+    }
+
+    /// Iterate all TEE-capable nodes. Used by the router to find
+    /// candidates that support confidential inference.
+    pub fn iter_tee_capabilities(
+        &self,
+    ) -> Result<Vec<(NodeId, arknet_common::types::TeeCapability)>> {
+        let cf = self.cf(CF_TEE)?;
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (k, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter tee: {e}")))?;
+            if k.len() != 32 {
+                continue;
+            }
+            let mut node_bytes = [0u8; 32];
+            node_bytes.copy_from_slice(&k);
+            let cap: arknet_common::types::TeeCapability =
+                borsh::from_slice(&v).map_err(|e| ChainError::Codec(format!("tee decode: {e}")))?;
+            out.push((NodeId::new(node_bytes), cap));
+        }
+        Ok(out)
+    }
+
+    /// Iterate all governance proposals in `CF_PROPOSALS`.
+    ///
+    /// Returns `(proposal_id, ProposalRecord)` pairs. Called once per
+    /// epoch boundary by `process_governance_proposals` to advance
+    /// lifecycle phases.
+    pub fn iter_proposals(&self) -> Result<Vec<(u64, crate::governance_entry::ProposalRecord)>> {
+        let cf = self.cf(CF_PROPOSALS)?;
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (k, v) =
+                kv.map_err(|e| ChainError::Codec(format!("rocksdb iter proposals: {e}")))?;
+            if k.len() != 8 {
+                continue;
+            }
+            let mut id_bytes = [0u8; 8];
+            id_bytes.copy_from_slice(&k);
+            let id = u64::from_be_bytes(id_bytes);
+            let record: crate::governance_entry::ProposalRecord = borsh::from_slice(&v)
+                .map_err(|e| ChainError::Codec(format!("proposal decode: {e}")))?;
+            out.push((id, record));
+        }
+        Ok(out)
+    }
+
+    /// Iterate all votes for a specific proposal from `CF_VOTES`.
+    ///
+    /// Returns `(voter_address, VoteChoice)` pairs. Called during
+    /// vote tallying at epoch boundaries.
+    pub fn iter_votes_for_proposal(
+        &self,
+        proposal_id: u64,
+    ) -> Result<Vec<(Address, crate::transactions::VoteChoice)>> {
+        let cf = self.cf(CF_VOTES)?;
+        let prefix = proposal_id.to_be_bytes();
+        let mode = rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward);
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, mode) {
+            let (k, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter votes: {e}")))?;
+            if !k.starts_with(&prefix) {
+                break;
+            }
+            if k.len() != 28 {
+                continue;
+            } // 8 (proposal_id) + 20 (voter)
+            let mut addr_bytes = [0u8; 20];
+            addr_bytes.copy_from_slice(&k[8..28]);
+            let voter = Address::new(addr_bytes);
+            if v.is_empty() {
+                continue;
+            }
+            let choice = match v[0] {
+                0x01 => crate::transactions::VoteChoice::Yes,
+                0x02 => crate::transactions::VoteChoice::No,
+                0x03 => crate::transactions::VoteChoice::Abstain,
+                0x04 => crate::transactions::VoteChoice::NoWithVeto,
+                _ => continue,
+            };
+            out.push((voter, choice));
+        }
+        Ok(out)
+    }
+
+    /// Sum all stake entry amounts across every node and role in
+    /// `CF_STAKES`.
+    ///
+    /// Called once per epoch boundary to compute the `total_bonded`
+    /// denominator for governance quorum checks. O(stake entries) —
+    /// acceptable at epoch cadence.
+    pub fn total_bonded_stake(&self) -> Result<Amount> {
+        let cf = self.cf(CF_STAKES)?;
+        let mut total: Amount = 0;
+        for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (_, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter stakes: {e}")))?;
+            let entry: StakeEntry = borsh::from_slice(&v)
+                .map_err(|e| ChainError::Codec(format!("stake decode: {e}")))?;
+            total = total.saturating_add(entry.amount);
+        }
+        Ok(total)
     }
 
     /// `true` if a receipt for `job_id` was already anchored in a
@@ -644,6 +811,13 @@ impl BlockCtx<'_> {
         Ok(())
     }
 
+    /// Persist the EIP-1559 base fee for the next block's apply layer.
+    pub fn set_base_fee(&mut self, fee: Amount) -> Result<()> {
+        let cf = self.state.cf(CF_META)?;
+        self.batch.put_cf(cf, META_BASE_FEE, fee.to_be_bytes());
+        Ok(())
+    }
+
     /// Look up a stake entry, consulting this block's overlay first.
     pub fn get_stake(
         &self,
@@ -797,6 +971,27 @@ impl BlockCtx<'_> {
         self.batch
             .put_cf(cf, b"next_proposal_id", next.to_be_bytes());
         Ok(())
+    }
+
+    /// Write a TEE capability record for a node.
+    pub fn set_tee_capability(&mut self, node_id: &NodeId, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_TEE)?;
+        self.batch.put_cf(cf, node_id.as_bytes(), data);
+        Ok(())
+    }
+
+    /// Read a TEE capability record (committed state).
+    pub fn get_tee_capability(&self, node_id: &NodeId) -> Result<Option<Vec<u8>>> {
+        let cf = self.state.cf(CF_TEE)?;
+        match self
+            .state
+            .db
+            .get_cf(cf, node_id.as_bytes())
+            .map_err(|e| ChainError::Codec(format!("rocksdb get tee: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+        }
     }
 
     /// Write a model registry entry.

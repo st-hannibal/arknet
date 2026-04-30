@@ -5,23 +5,22 @@
 //! chooses whether to include a tx; the state layer only answers "does it
 //! apply cleanly?"
 //!
-//! # Week 3-4 coverage
+//! # Supported transactions
 //!
-//! - [`Transaction::Transfer`] — full implementation (nonce, balance, fee burn).
-//! - [`Transaction::StakeOp`] — `Deposit` wires through; other variants are
-//!   stubbed with `Rejected(NotYetImplemented)` until Week 9.
-//! - [`Transaction::ReceiptBatch`] — rejected (`NotYetImplemented`) until
-//!   Weeks 10-11.
-//! - [`Transaction::RegisterModel`] / `GovProposal` / `GovVote` — same, until
-//!   Week 9+.
+//! - [`Transaction::Transfer`] — nonce, balance, fee burn.
+//! - [`Transaction::StakeOp`] — deposit, withdraw, complete, redelegate.
+//! - [`Transaction::ReceiptBatch`] — Merkle-verified receipt anchoring.
+//! - [`Transaction::RegisterModel`] — on-chain model registry (10K ARK deposit).
+//! - [`Transaction::EscrowLock`] / [`Transaction::EscrowSettle`] — escrow lifecycle.
+//! - [`Transaction::RewardMint`] — block reward distribution (proposer-only).
+//! - [`Transaction::GovProposal`] / [`Transaction::GovVote`] — governance.
+//! - [`Transaction::Dispute`] — verifier-submitted slashing evidence.
 //!
 //! # Fee model
 //!
 //! Per PROTOCOL_SPEC §7.2: the EIP-1559 base fee is **burned** (subtracted
-//! from the sender's balance, credited to nobody). The validator tip is a
-//! separate field that flows to the proposer, wired up when consensus lands
-//! in Week 7-8. Week 3-4 implements the burn side only, using the tx's
-//! `fee` field as the gas budget priced at 1 ark_atom/gas.
+//! from the sender's balance, credited to nobody). The `fee` field is the
+//! gas budget priced at 1 ark_atom/gas.
 
 use arknet_common::types::{Address, Amount, Gas, Height, JobId, Nonce};
 
@@ -198,6 +197,11 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
             voter,
             choice,
         } => apply_gov_vote(ctx, *proposal_id, voter, *choice),
+        Transaction::RegisterTeeCapability {
+            node_id,
+            operator,
+            capability,
+        } => apply_register_tee(ctx, node_id, operator, capability),
     }
 }
 
@@ -263,6 +267,49 @@ fn apply_receipt_batch(
         ctx.mark_receipt_seen(&r.job_id, height)?;
     }
 
+    // Bootstrap emission: during bootstrap, every anchored receipt
+    // queues a pending reward even without an escrow lock. This
+    // solves the fair-launch chicken-and-egg problem — compute nodes
+    // earn ARK from block emission for serving free-tier requests,
+    // bootstrapping the token supply from zero.
+    //
+    // Uses `in_bootstrap_epoch` (both height AND validator-count
+    // gates) so bootstrap emission stops once 100 validators are
+    // active, not just after the 6-month time window.
+    let active_count = ctx
+        .state()
+        .iter_validators()
+        .map(|v| v.len() as u32)
+        .unwrap_or(0);
+    let in_bootstrap = crate::bootstrap::in_bootstrap_epoch(height, active_count);
+    if in_bootstrap {
+        let epoch = height / crate::bootstrap::EPOCH_LENGTH_BLOCKS;
+        let treasury = bootstrap_treasury_address();
+        for r in &batch.receipts {
+            let compute_addr = node_id_to_address(&r.compute_node);
+            let router_addr = node_id_to_address(&r.router_node);
+            let tee_mult = if r.verification_tier == crate::receipt::VerificationTier::Tee {
+                crate::pending_reward::TEE_MULTIPLIER_TEE
+            } else {
+                crate::pending_reward::TEE_MULTIPLIER_NONE
+            };
+            let pr = crate::pending_reward::PendingReward {
+                job_id: r.job_id,
+                output_tokens: r.output_token_count,
+                user_payment: 0,
+                epoch,
+                compute_addr,
+                verifier_addr: treasury,
+                router_addr,
+                treasury_addr: treasury,
+                tee_multiplier_bps: tee_mult,
+            };
+            let pr_bytes = borsh::to_vec(&pr)
+                .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
+            ctx.set_pending_reward(&r.job_id, &pr_bytes)?;
+        }
+    }
+
     let gas_used = RECEIPT_ANCHOR_GAS_PER_RECEIPT.saturating_mul(batch.receipts.len() as u64);
     Ok(TxOutcome::Applied { gas_used })
 }
@@ -283,13 +330,9 @@ fn apply_dispute(
         return Ok(TxOutcome::Rejected(RejectReason::DisputeReceiptNotFound));
     }
 
-    // Phase-1 Dispute acceptance is a gate — the actual slashing
-    // (drain + burn/reporter/treasury split) happens in
-    // `arknet_staking::apply_slash` and is dispatched from the
-    // arknet-staking host-crate story (Phase 2). For now we record the
-    // acceptance as `Applied` so the block-builder still drains the
-    // tx; the slashing call site wires in at Week 12 when the
-    // verifier role ships its full mainline.
+    // Dispute acceptance gate. The actual slashing (drain + burn /
+    // reporter / treasury split) is dispatched from `commit_block`
+    // via `arknet_staking::apply_slash`.
     Ok(TxOutcome::Applied {
         gas_used: DISPUTE_GAS,
     })
@@ -408,15 +451,19 @@ fn apply_escrow_settle(
     // The exact per-token rate is computed at the epoch boundary once
     // total_tokens for the epoch is known (two-phase settlement).
     let epoch = height / crate::bootstrap::EPOCH_LENGTH_BLOCKS;
+    // EscrowSettle doesn't carry verification_tier; default to non-TEE.
+    // TEE multiplier is set correctly in bootstrap emission (receipt-based)
+    // and can be upgraded here once receipts are cross-referenced.
     let pending = crate::pending_reward::PendingReward {
         job_id: *job_id,
-        output_tokens: 0, // filled from receipt at settlement
+        output_tokens: 0,
         user_payment: entry.amount,
         epoch,
         compute_addr: *compute_addr,
         verifier_addr: *verifier_addr,
         router_addr: *router_addr,
         treasury_addr: *treasury_addr,
+        tee_multiplier_bps: crate::pending_reward::TEE_MULTIPLIER_NONE,
     };
     let pr_bytes = borsh::to_vec(&pending)
         .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
@@ -517,6 +564,88 @@ fn apply_register_model(
     })
 }
 
+/// Gas for TEE capability registration.
+pub const REGISTER_TEE_GAS: Gas = 200_000;
+
+/// Minimum TEE quote size (bytes). Intel TDX quotes are ~4-5 KB,
+/// AMD SEV-SNP reports ~1-4 KB. Anything smaller is structurally invalid.
+pub const MIN_TEE_QUOTE_BYTES: usize = 128;
+
+/// Structural validation of a TEE attestation quote.
+///
+/// Checks platform-specific minimum size and header bytes. This is NOT
+/// cryptographic verification — it only catches obvious garbage. Full
+/// root-of-trust verification (Intel PCS / AMD VCEK) runs when the
+/// verification library is deployed.
+fn validate_tee_quote_structure(
+    platform: arknet_common::types::TeePlatform,
+    quote: &[u8],
+) -> std::result::Result<(), &'static str> {
+    if quote.len() < MIN_TEE_QUOTE_BYTES {
+        return Err("TEE quote too short");
+    }
+    if quote.len() > arknet_common::types::MAX_TEE_QUOTE_BYTES {
+        return Err("TEE quote exceeds size limit");
+    }
+    match platform {
+        arknet_common::types::TeePlatform::IntelTdx => {
+            // Intel TDX quotes start with version 4 (little-endian u16).
+            if quote.len() < 4 || quote[0] != 4 || quote[1] != 0 {
+                return Err("Intel TDX quote: invalid version header");
+            }
+        }
+        arknet_common::types::TeePlatform::AmdSevSnp => {
+            // AMD SEV-SNP attestation reports start with version 2.
+            if quote.len() < 4 || (quote[0] != 2 && quote[0] != 3) {
+                return Err("AMD SEV-SNP report: invalid version byte");
+            }
+        }
+        arknet_common::types::TeePlatform::ArmCca => {
+            // ARM CCA reserved — accept any well-sized quote.
+        }
+    }
+    Ok(())
+}
+
+/// Register (or update) a compute node's TEE capability on-chain.
+///
+/// Validates:
+/// - Quote passes structural validation (min size, platform header).
+/// - Quote within [`MAX_TEE_QUOTE_BYTES`].
+/// - Enclave pubkey scheme is active (Ed25519 at genesis).
+///
+/// Full cryptographic verification of the attestation quote against
+/// Intel/AMD root CAs is activated once the verification library is
+/// deployed.
+fn apply_register_tee(
+    ctx: &mut BlockCtx<'_>,
+    node_id: &arknet_common::types::NodeId,
+    _operator: &Address,
+    capability: &arknet_common::types::TeeCapability,
+) -> Result<TxOutcome> {
+    if capability.quote.is_empty() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "empty TEE attestation quote",
+        )));
+    }
+    if let Err(reason) = validate_tee_quote_structure(capability.platform, &capability.quote) {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(reason)));
+    }
+    if !capability.enclave_pubkey.scheme.is_active() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "enclave pubkey uses inactive scheme",
+        )));
+    }
+
+    let bytes =
+        borsh::to_vec(capability).map_err(|e| ChainError::Codec(format!("tee encode: {e}")))?;
+    ctx.set_tee_capability(node_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REGISTER_TEE_GAS,
+    })
+}
+
 /// Gas for governance proposal submission.
 pub const GOV_PROPOSAL_GAS: Gas = 500_000;
 /// Gas for governance vote.
@@ -566,16 +695,30 @@ fn apply_gov_proposal(
 
 /// Cast a governance vote. Records the vote keyed by
 /// `(proposal_id, voter)`. Duplicate votes are rejected.
+///
+/// Only accepts votes when the proposal is in the `Voting` phase.
+/// Votes during `Discussion`, `Passed`, `Rejected`, `RejectedWithVeto`,
+/// or `Executed` are rejected.
 fn apply_gov_vote(
     ctx: &mut BlockCtx<'_>,
     proposal_id: u64,
     voter: &Address,
     choice: crate::transactions::VoteChoice,
 ) -> Result<TxOutcome> {
-    // Check proposal exists.
-    if ctx.get_proposal(proposal_id)?.is_none() {
+    // Check proposal exists and decode to verify phase.
+    let raw = match ctx.get_proposal(proposal_id)? {
+        Some(bytes) => bytes,
+        None => {
+            return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "proposal not found",
+            )));
+        }
+    };
+    let record: crate::governance_entry::ProposalRecord =
+        borsh::from_slice(&raw).map_err(|e| ChainError::Codec(format!("proposal decode: {e}")))?;
+    if record.phase != crate::governance_entry::ProposalPhase::Voting {
         return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "proposal not found",
+            "proposal not in voting phase",
         )));
     }
     // Check for duplicate vote.
@@ -642,6 +785,23 @@ fn derive_address_from_signer(signer: &arknet_common::types::PubKey) -> Address 
     Address::new(out)
 }
 
+/// Derive a 20-byte address from a NodeId. Used for bootstrap
+/// emission where we only have the node_id from the receipt.
+fn node_id_to_address(node_id: &arknet_common::types::NodeId) -> Address {
+    let digest = arknet_crypto::hash::blake3(node_id.as_bytes());
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&digest.as_bytes()[..20]);
+    Address::new(out)
+}
+
+/// Deterministic treasury address for bootstrap rewards.
+fn bootstrap_treasury_address() -> Address {
+    let digest = arknet_crypto::hash::blake3(b"arknet-treasury-v1");
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&digest.as_bytes()[..20]);
+    Address::new(out)
+}
+
 fn apply_transfer(
     ctx: &mut BlockCtx<'_>,
     from: &Address,
@@ -668,10 +828,11 @@ fn apply_transfer(
         }));
     }
 
-    // Fee is priced at 1 ark_atom per gas unit during Phase 1. The base fee
-    // curve from `fee_market.rs` becomes the multiplier once the block
-    // builder hands it in (Week 7-8).
-    let total: Amount = match amount.checked_add(fee as Amount) {
+    // EIP-1559: fee cost = gas_budget × base_fee_per_gas. The base fee
+    // is stored in CF_META and updated each block by the commit path.
+    let base_fee = ctx.state().base_fee().unwrap_or(1);
+    let fee_cost = (fee as Amount).saturating_mul(base_fee);
+    let total: Amount = match amount.checked_add(fee_cost) {
         Some(v) => v,
         None => {
             return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
@@ -1032,6 +1193,176 @@ mod tests {
         match apply_tx(&mut ctx, &stx).unwrap() {
             TxOutcome::Rejected(RejectReason::InsufficientBalance { .. }) => {}
             other => panic!("expected insufficient balance, got {other:?}"),
+        }
+    }
+
+    fn valid_tdx_quote() -> Vec<u8> {
+        let mut q = vec![0u8; 256];
+        q[0] = 4; // TDX version = 4 (little-endian u16)
+        q[1] = 0;
+        q
+    }
+
+    fn valid_snp_quote() -> Vec<u8> {
+        let mut q = vec![0u8; 256];
+        q[0] = 2; // SEV-SNP version = 2
+        q
+    }
+
+    #[test]
+    fn register_tee_happy_path() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        let node_id = arknet_common::types::NodeId::new([0xaa; 32]);
+        let operator = Address::new([0xbb; 20]);
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id,
+            operator,
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: valid_tdx_quote(),
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        let outcome = apply_tx(&mut ctx, &stx).unwrap();
+        assert_eq!(
+            outcome,
+            TxOutcome::Applied {
+                gas_used: REGISTER_TEE_GAS
+            }
+        );
+        ctx.commit().unwrap();
+
+        let cap = state.get_tee_capability(&node_id).unwrap();
+        assert!(cap.is_some());
+        assert_eq!(cap.unwrap().platform, TeePlatform::IntelTdx);
+    }
+
+    #[test]
+    fn register_tee_rejects_empty_quote() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::AmdSevSnp,
+                quote: vec![],
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented("empty TEE attestation quote")) => {
+            }
+            other => panic!("expected empty quote rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_tee_rejects_oversized_quote() {
+        use arknet_common::types::{TeeCapability, TeePlatform, MAX_TEE_QUOTE_BYTES};
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: vec![0xff; MAX_TEE_QUOTE_BYTES + 1],
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "TEE quote exceeds size limit",
+            )) => {}
+            other => panic!("expected oversized quote rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_tee_update_overwrites() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        let node_id = arknet_common::types::NodeId::new([0xaa; 32]);
+        let operator = Address::new([0xbb; 20]);
+
+        // First registration: Intel TDX.
+        let stx1 = sign(Transaction::RegisterTeeCapability {
+            node_id,
+            operator,
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: valid_tdx_quote(),
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx1).unwrap();
+        ctx.commit().unwrap();
+
+        // Second registration: AMD SEV-SNP (update).
+        let stx2 = sign(Transaction::RegisterTeeCapability {
+            node_id,
+            operator,
+            capability: TeeCapability {
+                platform: TeePlatform::AmdSevSnp,
+                quote: valid_snp_quote(),
+                enclave_pubkey: PubKey::ed25519([0xdd; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx2).unwrap();
+        ctx.commit().unwrap();
+
+        let cap = state.get_tee_capability(&node_id).unwrap().unwrap();
+        assert_eq!(cap.platform, TeePlatform::AmdSevSnp);
+    }
+
+    #[test]
+    fn register_tee_rejects_bad_tdx_header() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        // Quote is long enough but has wrong version header for TDX.
+        let mut bad_quote = vec![0u8; 256];
+        bad_quote[0] = 99; // not version 4
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: bad_quote,
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "Intel TDX quote: invalid version header",
+            )) => {}
+            other => panic!("expected TDX header rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_tee_rejects_too_short_quote() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: vec![4, 0, 0, 0], // valid header but too short
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented("TEE quote too short")) => {}
+            other => panic!("expected too-short rejection, got {other:?}"),
         }
     }
 

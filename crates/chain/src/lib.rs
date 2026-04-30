@@ -41,19 +41,25 @@ pub mod unbonding;
 pub mod validator;
 
 pub use account::Account;
-pub use apply::{apply_tx, RejectReason, TxOutcome, MODEL_DEPOSIT, REGISTER_MODEL_GAS};
+pub use apply::{
+    apply_tx, RejectReason, TxOutcome, MODEL_DEPOSIT, REGISTER_MODEL_GAS, REGISTER_TEE_GAS,
+};
 pub use block::{check_block_size, receipt_root, tx_root, Block, BlockHeader, MAX_BLOCK_BYTES};
 pub use bootstrap::{
     in_bootstrap_epoch, BOOTSTRAP_MAX_BLOCKS, BOOTSTRAP_VALIDATOR_TARGET, EPOCH_LENGTH_BLOCKS,
 };
+pub use circuit_breaker::CircuitBreakerState;
 pub use errors::{ChainError, Result};
 pub use escrow_entry::{EscrowEntry, EscrowState, ESCROW_TIMEOUT_BLOCKS};
 pub use fee_market::{next_base_fee, BASE_FEE_MAX_CHANGE_DENOM, MIN_BASE_FEE};
-pub use genesis::{load_genesis, GenesisConfig, GenesisParams, GenesisValidator};
-pub use pending_reward::PendingReward;
+pub use genesis::{
+    load_genesis, seed_genesis_models, GenesisConfig, GenesisModel, GenesisParams, GenesisValidator,
+};
+pub use pending_reward::{PendingReward, TEE_MULTIPLIER_NONE, TEE_MULTIPLIER_TEE};
 pub use receipt::{
     ComputeProof, DaLayer, DaReference, InferenceReceipt, Quantization, ReceiptBatch,
-    TeeAttestation, MAX_RECEIPT_BATCH_BYTES, MAX_RECEIPT_BYTES, RECEIPT_BATCH_MAX,
+    TeeAttestation, VerificationTier, MAX_RECEIPT_BATCH_BYTES, MAX_RECEIPT_BYTES,
+    RECEIPT_BATCH_MAX,
 };
 pub use stake_apply::{
     apply_stake_op, REDELEGATE_COOLDOWN_BLOCKS, STAKE_OP_GAS, UNBONDING_PERIOD_BLOCKS,

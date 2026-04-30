@@ -13,6 +13,11 @@ pub enum RouterError {
     #[error("no candidate available")]
     NoCandidate,
 
+    /// Request requires a TEE-capable node but none are available.
+    /// No silent downgrade — the user must opt out of TEE explicitly.
+    #[error("no TEE-capable candidate available")]
+    NoTeeCandidate,
+
     /// Free-tier quota exhausted for this wallet.
     #[error("free-tier exhausted: {reason}")]
     FreeTierExhausted {

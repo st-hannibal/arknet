@@ -14,6 +14,21 @@ use serde::{Deserialize, Serialize};
 
 use arknet_common::types::{Address, Hash256, JobId, Nonce, PubKey, Signature, Timestamp};
 
+/// X25519 + ChaCha20-Poly1305 encrypted envelope for confidential
+/// inference. The user generates an ephemeral X25519 keypair, performs
+/// ECDH against the enclave's pubkey, and encrypts the prompt. The
+/// compute node (running inside a TEE) decrypts using the enclave's
+/// private key — the host OS never sees plaintext.
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub struct EncryptedEnvelope {
+    /// User's ephemeral X25519 public key (32 bytes).
+    pub ephemeral_pubkey: Vec<u8>,
+    /// 12-byte nonce for ChaCha20-Poly1305.
+    pub nonce: Vec<u8>,
+    /// Encrypted prompt bytes (ciphertext + 16-byte Poly1305 tag).
+    pub ciphertext: Vec<u8>,
+}
+
 /// A request for a single inference job, signed by the user.
 ///
 /// `user_pubkey` is the signing key; `signature` covers the borsh encoding
@@ -44,6 +59,13 @@ pub struct InferenceJobRequest {
     pub user_pubkey: PubKey,
     /// Signature over borsh encoding of every prior field.
     pub signature: Signature,
+    /// `true` → route only to TEE-capable nodes. The router rejects the
+    /// request if no TEE candidate is available (no silent downgrade).
+    pub prefer_tee: bool,
+    /// When `prefer_tee` is true and the user wants confidential inference,
+    /// the prompt is encrypted to the enclave's pubkey and sent here
+    /// instead of in `prompt`. The `prompt` field is empty in this case.
+    pub encrypted_prompt: Option<EncryptedEnvelope>,
 }
 
 /// Derived user address = `blake3(pubkey.bytes)[0..20]`.
@@ -148,6 +170,10 @@ pub struct InferenceRequestSigningBody<'a> {
     pub timestamp_ms: Timestamp,
     /// Pubkey.
     pub user_pubkey: &'a PubKey,
+    /// TEE preference flag.
+    pub prefer_tee: bool,
+    /// Encrypted prompt (if present).
+    pub encrypted_prompt: &'a Option<EncryptedEnvelope>,
 }
 
 /// Domain tag for inference-request signatures. Never reused by any
@@ -170,6 +196,8 @@ impl InferenceJobRequest {
             nonce: self.nonce,
             timestamp_ms: self.timestamp_ms,
             user_pubkey: &self.user_pubkey,
+            prefer_tee: self.prefer_tee,
+            encrypted_prompt: &self.encrypted_prompt,
         };
         borsh::to_vec(&body).expect("borsh encoding of signing body is infallible")
     }
@@ -198,6 +226,8 @@ mod tests {
             timestamp_ms: 1_700_000_000_000,
             user_pubkey: PubKey::ed25519([0x11; 32]),
             signature: Signature::ed25519([0x22; 64]),
+            prefer_tee: false,
+            encrypted_prompt: None,
         }
     }
 
@@ -260,6 +290,27 @@ mod tests {
         let a = derive_user_address(&pk);
         let digest = blake3::hash(&pk.bytes);
         assert_eq!(a.as_bytes(), &digest.as_bytes()[..20]);
+    }
+
+    #[test]
+    fn encrypted_envelope_borsh_roundtrip() {
+        let env = EncryptedEnvelope {
+            ephemeral_pubkey: vec![0x01; 32],
+            nonce: vec![0x02; 12],
+            ciphertext: vec![0x03; 100],
+        };
+        let bytes = borsh::to_vec(&env).unwrap();
+        let back: EncryptedEnvelope = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(env, back);
+    }
+
+    #[test]
+    fn prefer_tee_included_in_signing_bytes() {
+        let mut r = sample();
+        let without = r.signing_bytes();
+        r.prefer_tee = true;
+        let with = r.signing_bytes();
+        assert_ne!(without, with, "prefer_tee must affect signing bytes");
     }
 
     #[test]

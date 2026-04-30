@@ -56,7 +56,7 @@ where
 mod tests {
     use super::*;
     use crate::batch::ReceiptBatchBuilder;
-    use arknet_chain::{ComputeProof, InferenceReceipt, Quantization};
+    use arknet_chain::{ComputeProof, InferenceReceipt, Quantization, VerificationTier};
     use arknet_common::types::{
         Address, JobId, NodeId, PoolId, Signature as ApiSignature, SignatureScheme,
     };
@@ -84,6 +84,8 @@ mod tests {
             seed: 0,
             compute_proof: ComputeProof::HashChain(vec![[0; 32]]),
             tee_attestation: None,
+            verification_tier: VerificationTier::Optimistic,
+            prompt_encrypted: false,
             timestamp_start: 1,
             timestamp_end: 2,
             compute_signature: ApiSignature::new(SignatureScheme::Ed25519, vec![0xaa; 64]).unwrap(),

@@ -12,6 +12,7 @@ arknet-common   = { workspace = true }
 arknet-network  = { workspace = true }
 arknet-crypto   = { workspace = true }
 arknet-compute  = { workspace = true }
+arknet-chain    = { workspace = true }
 
 tokio           = { workspace = true }
 tokio-stream    = "0.1"

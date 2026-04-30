@@ -108,6 +108,33 @@ pub struct TeeAttestation {
     pub quote: Vec<u8>,
 }
 
+/// Which verification path was used for a job. Recorded on every
+/// receipt so the chain has an auditable trail of verification quality.
+///
+/// Discriminant values are protocol-level — changing them is a hard fork.
+#[repr(u8)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+)]
+#[borsh(use_discriminant = true)]
+pub enum VerificationTier {
+    /// Default: 5% spot-check, no re-execution unless selected.
+    Optimistic = 0x01,
+    /// Verifier re-executed the job deterministically.
+    Deterministic = 0x02,
+    /// Compute node ran inside a TEE; receipt carries attestation.
+    Tee = 0x03,
+}
+
 /// The on-chain record of a single inference job.
 ///
 /// Canonical shape: `docs/PROTOCOL_SPEC.md §6`. Signed by the compute node
@@ -166,6 +193,13 @@ pub struct InferenceReceipt {
     pub compute_proof: ComputeProof,
     /// Optional TEE attestation.
     pub tee_attestation: Option<TeeAttestation>,
+    /// Which verification path was used.
+    #[serde(default = "default_verification_tier")]
+    pub verification_tier: VerificationTier,
+    /// `true` if the prompt was encrypted to the enclave's pubkey
+    /// (confidential inference).
+    #[serde(default)]
+    pub prompt_encrypted: bool,
 
     // --- Timing ---
     /// Job start timestamp (ms since epoch).
@@ -193,6 +227,11 @@ pub struct ReceiptBatch {
     pub aggregator: NodeId,
     /// Aggregator signature over the batch.
     pub signature: Signature,
+}
+
+/// Default verification tier for backward-compatible deserialization.
+fn default_verification_tier() -> VerificationTier {
+    VerificationTier::Optimistic
 }
 
 /// Hard cap on receipt borsh size — anything larger is rejected before
@@ -232,6 +271,8 @@ mod tests {
             seed: 42,
             compute_proof: ComputeProof::HashChain(vec![[9; 32], [10; 32]]),
             tee_attestation: None,
+            verification_tier: VerificationTier::Optimistic,
+            prompt_encrypted: false,
             timestamp_start: 1_700_000_000_000,
             timestamp_end: 1_700_000_002_500,
             compute_signature: Signature::new(SignatureScheme::Ed25519, vec![0xaa; 64]).unwrap(),
@@ -270,6 +311,13 @@ mod tests {
         let bytes = borsh::to_vec(&batch).unwrap();
         let decoded: ReceiptBatch = borsh::from_slice(&bytes).unwrap();
         assert_eq!(batch, decoded);
+    }
+
+    #[test]
+    fn verification_tier_discriminants_are_stable() {
+        assert_eq!(VerificationTier::Optimistic as u8, 0x01);
+        assert_eq!(VerificationTier::Deterministic as u8, 0x02);
+        assert_eq!(VerificationTier::Tee as u8, 0x03);
     }
 
     #[test]

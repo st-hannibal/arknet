@@ -1,5 +1,5 @@
 {
-  "name": "@arknet/sdk",
+  "name": "arknet-sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for the arknet decentralized AI inference network.",
   "main": "dist/index.js",

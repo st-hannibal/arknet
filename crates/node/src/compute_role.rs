@@ -85,6 +85,7 @@ pub fn register_self_as_candidate(
         model_refs,
         last_seen_ms: arknet_router::failover::now_ms(),
         dispatcher,
+        supports_tee: rt.cfg.tee.enabled,
     };
     router.registry().upsert(candidate);
 }

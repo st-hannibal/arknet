@@ -34,6 +34,13 @@ export interface ChatCompletionRequest {
   temperature?: number;
   stream?: boolean;
   stop?: string | string[];
+  /**
+   * arknet extension: route only to TEE-capable nodes for confidential
+   * inference. Prompts are encrypted to the enclave's public key — the
+   * host OS never sees plaintext. Rejected if no TEE node is available
+   * (no silent downgrade).
+   */
+  prefer_tee?: boolean;
 }
 
 export interface ChatCompletionResponse {

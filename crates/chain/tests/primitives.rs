@@ -47,6 +47,7 @@ fn sample_header(height: u64) -> BlockHeader {
         proposer: NodeId::new([4; 32]),
         validator_set_hash: [5; 32],
         base_fee: 1_000_000_000,
+        genesis_message: String::new(),
     }
 }
 
