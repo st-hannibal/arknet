@@ -262,6 +262,34 @@ fn apply_receipt_batch(
         ctx.mark_receipt_seen(&r.job_id, height)?;
     }
 
+    // Bootstrap emission: during bootstrap, every anchored receipt
+    // queues a pending reward even without an escrow lock. This
+    // solves the fair-launch chicken-and-egg problem — compute nodes
+    // earn ARK from block emission for serving free-tier requests,
+    // bootstrapping the token supply from zero.
+    let in_bootstrap = crate::bootstrap::within_bootstrap_window(height);
+    if in_bootstrap {
+        let epoch = height / crate::bootstrap::EPOCH_LENGTH_BLOCKS;
+        let treasury = bootstrap_treasury_address();
+        for r in &batch.receipts {
+            let compute_addr = node_id_to_address(&r.compute_node);
+            let router_addr = node_id_to_address(&r.router_node);
+            let pr = crate::pending_reward::PendingReward {
+                job_id: r.job_id,
+                output_tokens: r.output_token_count,
+                user_payment: 0,
+                epoch,
+                compute_addr,
+                verifier_addr: treasury,
+                router_addr,
+                treasury_addr: treasury,
+            };
+            let pr_bytes = borsh::to_vec(&pr)
+                .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
+            ctx.set_pending_reward(&r.job_id, &pr_bytes)?;
+        }
+    }
+
     let gas_used = RECEIPT_ANCHOR_GAS_PER_RECEIPT.saturating_mul(batch.receipts.len() as u64);
     Ok(TxOutcome::Applied { gas_used })
 }
@@ -632,6 +660,23 @@ fn credit_reward_split(
 
 fn derive_address_from_signer(signer: &arknet_common::types::PubKey) -> Address {
     let digest = arknet_crypto::hash::blake3(&signer.bytes);
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&digest.as_bytes()[..20]);
+    Address::new(out)
+}
+
+/// Derive a 20-byte address from a NodeId. Used for bootstrap
+/// emission where we only have the node_id from the receipt.
+fn node_id_to_address(node_id: &arknet_common::types::NodeId) -> Address {
+    let digest = arknet_crypto::hash::blake3(node_id.as_bytes());
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&digest.as_bytes()[..20]);
+    Address::new(out)
+}
+
+/// Deterministic treasury address for bootstrap rewards.
+fn bootstrap_treasury_address() -> Address {
+    let digest = arknet_crypto::hash::blake3(b"arknet-treasury-v1");
     let mut out = [0u8; 20];
     out.copy_from_slice(&digest.as_bytes()[..20]);
     Address::new(out)
