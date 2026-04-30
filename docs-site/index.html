@@ -108,6 +108,7 @@
   <a href="/docs/tokenomics.html">Tokenomics</a>
   <a href="/docs/models.html">Models</a>
   <a href="/docs/developers.html">Developers</a>
+  <a href="/explorer.html">Explorer</a>
   <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
 </nav>
 
@@ -122,7 +123,8 @@ arknet init --network mainnet
 arknet start --role compute</pre>
 
   <pre><span style="color:var(--muted)"># Use as a developer — change one line from OpenAI</span>
-client = OpenAI(base_url="https://your-node:26657/v1")
+<span style="color:var(--muted)"># The network routes your request to the best available node</span>
+client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
 response = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
