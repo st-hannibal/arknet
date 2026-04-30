@@ -195,11 +195,26 @@ async fn send_transfer(data_dir: &Path, args: &SendArgs) -> Result<()> {
     let from = arknet_common::types::Address::new(from_bytes);
     let to = arknet_common::types::Address::new(to_bytes);
 
+    // Query current nonce from the running node so sequential
+    // sends work. Falls back to 0 if the node is unreachable or
+    // the account doesn't exist yet.
+    let nonce = {
+        let addr_hex = hex::encode(from_bytes);
+        let url = format!("{}/v1/account/{}", args.rpc, addr_hex);
+        match reqwest::get(&url).await {
+            Ok(resp) if resp.status().is_success() => {
+                let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                body.get("nonce").and_then(|v| v.as_u64()).unwrap_or(0)
+            }
+            _ => 0,
+        }
+    };
+
     let tx = arknet_chain::transactions::Transaction::Transfer {
         from,
         to,
         amount: args.amount as u128,
-        nonce: 0,
+        nonce,
         fee: args.fee,
     };
 
