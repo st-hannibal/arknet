@@ -12,7 +12,8 @@ arknet-common  = { workspace = true }
 arknet-crypto  = { workspace = true }
 arknet-chain   = { workspace = true }
 arknet-network = { workspace = true }
-arknet-staking = { workspace = true }
+arknet-staking  = { workspace = true }
+arknet-payments = { workspace = true }
 
 tokio          = { workspace = true }
 tokio-util     = { workspace = true }
