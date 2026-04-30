@@ -5,23 +5,22 @@
 //! chooses whether to include a tx; the state layer only answers "does it
 //! apply cleanly?"
 //!
-//! # Week 3-4 coverage
+//! # Supported transactions
 //!
-//! - [`Transaction::Transfer`] — full implementation (nonce, balance, fee burn).
-//! - [`Transaction::StakeOp`] — `Deposit` wires through; other variants are
-//!   stubbed with `Rejected(NotYetImplemented)` until Week 9.
-//! - [`Transaction::ReceiptBatch`] — rejected (`NotYetImplemented`) until
-//!   Weeks 10-11.
-//! - [`Transaction::RegisterModel`] / `GovProposal` / `GovVote` — same, until
-//!   Week 9+.
+//! - [`Transaction::Transfer`] — nonce, balance, fee burn.
+//! - [`Transaction::StakeOp`] — deposit, withdraw, complete, redelegate.
+//! - [`Transaction::ReceiptBatch`] — Merkle-verified receipt anchoring.
+//! - [`Transaction::RegisterModel`] — on-chain model registry (10K ARK deposit).
+//! - [`Transaction::EscrowLock`] / [`Transaction::EscrowSettle`] — escrow lifecycle.
+//! - [`Transaction::RewardMint`] — block reward distribution (proposer-only).
+//! - [`Transaction::GovProposal`] / [`Transaction::GovVote`] — governance.
+//! - [`Transaction::Dispute`] — verifier-submitted slashing evidence.
 //!
 //! # Fee model
 //!
 //! Per PROTOCOL_SPEC §7.2: the EIP-1559 base fee is **burned** (subtracted
-//! from the sender's balance, credited to nobody). The validator tip is a
-//! separate field that flows to the proposer, wired up when consensus lands
-//! in Week 7-8. Week 3-4 implements the burn side only, using the tx's
-//! `fee` field as the gas budget priced at 1 ark_atom/gas.
+//! from the sender's balance, credited to nobody). The `fee` field is the
+//! gas budget priced at 1 ark_atom/gas.
 
 use arknet_common::types::{Address, Amount, Gas, Height, JobId, Nonce};
 
@@ -283,13 +282,9 @@ fn apply_dispute(
         return Ok(TxOutcome::Rejected(RejectReason::DisputeReceiptNotFound));
     }
 
-    // Phase-1 Dispute acceptance is a gate — the actual slashing
-    // (drain + burn/reporter/treasury split) happens in
-    // `arknet_staking::apply_slash` and is dispatched from the
-    // arknet-staking host-crate story (Phase 2). For now we record the
-    // acceptance as `Applied` so the block-builder still drains the
-    // tx; the slashing call site wires in at Week 12 when the
-    // verifier role ships its full mainline.
+    // Dispute acceptance gate. The actual slashing (drain + burn /
+    // reporter / treasury split) is dispatched from `commit_block`
+    // via `arknet_staking::apply_slash`.
     Ok(TxOutcome::Applied {
         gas_used: DISPUTE_GAS,
     })
