@@ -122,9 +122,15 @@ curl -fsSL https://arknet.arkengel.com/install.sh | sh
 arknet init --network mainnet
 arknet start --role compute</pre>
 
-  <pre><span style="color:var(--muted)"># Use as a developer — change one line from OpenAI</span>
-<span style="color:var(--muted)"># The network routes your request to the best available node</span>
+  <pre><span style="color:var(--muted)"># Via the decentralized network (any public gateway)</span>
 client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
+response = client.chat.completions.create(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello from arknet"}],
+)</pre>
+
+  <pre><span style="color:var(--muted)"># Via your own local node (free, runs on your hardware)</span>
+client = OpenAI(base_url="http://localhost:26657/v1", api_key="unused")
 response = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
@@ -161,7 +167,10 @@ validator = false
 router    = true
 compute   = true     # needs GPU
 verifier  = false</pre>
-  <p>A Raspberry Pi can route. A gaming laptop can compute. A server rack can do everything. The network adapts.</p>
+  <p>A Raspberry Pi can route. A gaming laptop can compute. A server rack can do everything.</p>
+
+  <h2>Simple networking</h2>
+  <p>Open <strong>one port</strong> (26656 P2P) — that's it. Your node discovers peers, gossips blocks, and routes inference automatically. All P2P traffic is Noise-encrypted. The RPC port (26657) stays private to you unless you choose to run a public gateway.</p>
 
   <h2>10 models at genesis</h2>
   <p>From edge devices to data centers — all GGUF format, verified by SHA-256:</p>

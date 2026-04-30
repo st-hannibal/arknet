@@ -203,6 +203,7 @@ async fn four_node_cluster_decides_multiple_heights() {
                 per_round_delta: Duration::from_millis(250),
                 block_interval: Duration::from_millis(250),
             },
+            genesis_message: String::new(),
         };
 
         let (handle, engine_join) = ConsensusEngine::start(
