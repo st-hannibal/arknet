@@ -79,6 +79,18 @@ pub async fn start_validator(
 
     let state = ChainState::open(&paths::l1_dir(data_dir))
         .map_err(|e| NodeError::Config(format!("open chain state: {e}")))?;
+
+    // Seed genesis models on first boot (idempotent — skips if
+    // CF_MODELS already has entries from a prior run).
+    if !genesis.models.is_empty() && state.current_height().unwrap_or(None).is_none() {
+        let mut ctx = state.begin_block();
+        arknet_chain::genesis::seed_genesis_models(&mut ctx, &genesis.models)
+            .map_err(|e| NodeError::Config(format!("seed genesis models: {e}")))?;
+        ctx.commit()
+            .map_err(|e| NodeError::Config(format!("commit genesis models: {e}")))?;
+        info!(count = genesis.models.len(), "seeded genesis models");
+    }
+
     let state = Arc::new(state);
 
     let (consensus_pk, consensus_sk) = ed25519_from_libp2p(keypair)?;

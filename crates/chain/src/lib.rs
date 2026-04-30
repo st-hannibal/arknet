@@ -49,7 +49,9 @@ pub use bootstrap::{
 pub use errors::{ChainError, Result};
 pub use escrow_entry::{EscrowEntry, EscrowState, ESCROW_TIMEOUT_BLOCKS};
 pub use fee_market::{next_base_fee, BASE_FEE_MAX_CHANGE_DENOM, MIN_BASE_FEE};
-pub use genesis::{load_genesis, GenesisConfig, GenesisParams, GenesisValidator};
+pub use genesis::{
+    load_genesis, seed_genesis_models, GenesisConfig, GenesisModel, GenesisParams, GenesisValidator,
+};
 pub use pending_reward::PendingReward;
 pub use receipt::{
     ComputeProof, DaLayer, DaReference, InferenceReceipt, Quantization, ReceiptBatch,
