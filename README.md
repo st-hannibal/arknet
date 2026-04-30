@@ -17,12 +17,15 @@ Anyone with a computer earns **ARK** for serving AI models. Any developer querie
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="https://your-node:26657/v1", api_key="ark_...")
+# Point at any arknet gateway — the network routes to the best node
+client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
 response = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )
 ```
+
+The network handles routing — you never need to know which node serves your request. Any community gateway or your own local node works as the entry point.
 
 ## Run a node
 

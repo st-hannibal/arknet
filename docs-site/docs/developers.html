@@ -34,6 +34,7 @@
   <a href="/docs/tokenomics.html">Tokenomics</a>
   <a href="/docs/models.html">Models</a>
   <a href="/docs/developers.html">Developers</a>
+  <a href="/explorer.html">Explorer</a>
   <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
 </nav>
 <main>
@@ -131,7 +132,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:26657/v1",
-    api_key="ark_..."  # wallet-derived session token
+    api_key="unused"  # no auth required at genesis
 )
 response = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
