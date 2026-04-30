@@ -373,8 +373,17 @@ fn extract_sender_nonce_fee(tx: &Transaction) -> Result<(Address, Nonce, Gas), M
         Transaction::RegisterModel { .. } => {
             Err(MempoolError::Unsupported("RegisterModel (Week 9+)"))
         }
-        Transaction::GovProposal(_) => Err(MempoolError::Unsupported("GovProposal (Week 9+)")),
-        Transaction::GovVote { .. } => Err(MempoolError::Unsupported("GovVote (Week 9+)")),
+        Transaction::EscrowLock {
+            from, nonce, fee, ..
+        } => Ok((*from, *nonce, *fee)),
+        Transaction::EscrowSettle { .. } => {
+            Err(MempoolError::Unsupported("EscrowSettle (proposer-only)"))
+        }
+        Transaction::RewardMint { .. } => {
+            Err(MempoolError::Unsupported("RewardMint (proposer-only)"))
+        }
+        Transaction::GovProposal(_) => Err(MempoolError::Unsupported("GovProposal")),
+        Transaction::GovVote { .. } => Err(MempoolError::Unsupported("GovVote")),
     }
 }
 

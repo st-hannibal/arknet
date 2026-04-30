@@ -23,7 +23,7 @@
 //! in Week 7-8. Week 3-4 implements the burn side only, using the tx's
 //! `fee` field as the gas budget priced at 1 ark_atom/gas.
 
-use arknet_common::types::{Address, Amount, Gas, Height, Nonce};
+use arknet_common::types::{Address, Amount, Gas, Height, JobId, Nonce};
 
 use crate::errors::{ChainError, Result};
 use crate::state::BlockCtx;
@@ -147,14 +147,54 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
         }
         Transaction::ReceiptBatch(batch) => apply_receipt_batch(ctx, batch, height),
         Transaction::Dispute(d) => apply_dispute(ctx, d, height),
+        Transaction::EscrowLock {
+            from,
+            job_id,
+            amount,
+            nonce,
+            fee,
+        } => apply_escrow_lock(ctx, from, job_id, *amount, *nonce, *fee, height),
+        Transaction::EscrowSettle {
+            job_id,
+            batch_id: _,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+        } => apply_escrow_settle(
+            ctx,
+            job_id,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+            height,
+        ),
+        Transaction::RewardMint {
+            job_id,
+            total_reward,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+            output_tokens: _,
+        } => apply_reward_mint(
+            ctx,
+            job_id,
+            *total_reward,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+        ),
         Transaction::RegisterModel { .. } => Ok(TxOutcome::Rejected(
-            RejectReason::NotYetImplemented("RegisterModel (Week 10+)"),
+            RejectReason::NotYetImplemented("RegisterModel"),
         )),
         Transaction::GovProposal(_) => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovProposal (Week 10+)",
+            "GovProposal",
         ))),
         Transaction::GovVote { .. } => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovVote (Week 10+)",
+            "GovVote",
         ))),
     }
 }
@@ -257,6 +297,191 @@ fn apply_dispute(
 ///
 /// Matches the derivation used by the genesis loader +
 /// [`crate::genesis::genesis_to_validator_info`]: `blake3(pubkey_bytes)[..20]`.
+/// Gas for escrow lock/settle/refund.
+pub const ESCROW_LOCK_GAS: Gas = 50_000;
+/// Gas for escrow settle.
+pub const ESCROW_SETTLE_GAS: Gas = 50_000;
+/// Gas for reward mint (per recipient line).
+pub const REWARD_MINT_GAS: Gas = 30_000;
+
+/// Lock user funds in escrow for a job.
+#[allow(clippy::too_many_arguments)]
+fn apply_escrow_lock(
+    ctx: &mut BlockCtx<'_>,
+    sender: &Address,
+    job_id: &JobId,
+    amount: Amount,
+    nonce: Nonce,
+    fee: Gas,
+    height: Height,
+) -> Result<TxOutcome> {
+    if amount == 0 {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "zero-amount escrow",
+        )));
+    }
+    // Check for duplicate escrow.
+    if ctx.get_escrow(job_id)?.is_some() {
+        return Ok(TxOutcome::Rejected(RejectReason::ReceiptDoubleAnchor {
+            job_id_hex: hex::encode(job_id.0),
+        }));
+    }
+    // Debit sender.
+    let mut acct = ctx.get_account(sender)?.unwrap_or_default();
+    if acct.nonce != nonce {
+        return Ok(TxOutcome::Rejected(RejectReason::NonceMismatch {
+            expected: acct.nonce,
+            got: nonce,
+        }));
+    }
+    let total = amount.saturating_add(fee as Amount);
+    if acct.balance < total {
+        return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
+            have: acct.balance,
+            need: total,
+        }));
+    }
+    acct.balance -= total;
+    acct.nonce += 1;
+    ctx.set_account(sender, &acct)?;
+
+    // Create escrow record.
+    let entry = crate::escrow_entry::EscrowEntry {
+        job_id: *job_id,
+        user: *sender,
+        amount,
+        created_at: height,
+        state: crate::escrow_entry::EscrowState::Locked,
+    };
+    let bytes =
+        borsh::to_vec(&entry).map_err(|e| ChainError::Codec(format!("escrow encode: {e}")))?;
+    ctx.set_escrow(job_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: ESCROW_LOCK_GAS,
+    })
+}
+
+/// Settle a locked escrow — distribute funds via the 75/7/5/5/3/5
+/// reward split.
+#[allow(clippy::too_many_arguments)]
+fn apply_escrow_settle(
+    ctx: &mut BlockCtx<'_>,
+    job_id: &JobId,
+    compute_addr: &Address,
+    verifier_addr: &Address,
+    router_addr: &Address,
+    treasury_addr: &Address,
+    _height: Height,
+) -> Result<TxOutcome> {
+    let raw = match ctx.get_escrow(job_id)? {
+        Some(b) => b,
+        None => {
+            return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "escrow not found for settle",
+            )));
+        }
+    };
+    let mut entry: crate::escrow_entry::EscrowEntry =
+        borsh::from_slice(&raw).map_err(|e| ChainError::Codec(format!("escrow decode: {e}")))?;
+
+    if entry.state != crate::escrow_entry::EscrowState::Locked {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "escrow not in Locked state",
+        )));
+    }
+
+    // Settle: distribute the escrowed amount using the 75/7/5/5/3/5 split.
+    credit_reward_split(
+        ctx,
+        entry.amount,
+        compute_addr,
+        verifier_addr,
+        router_addr,
+        treasury_addr,
+    )?;
+
+    entry.state = crate::escrow_entry::EscrowState::Settled;
+    let bytes =
+        borsh::to_vec(&entry).map_err(|e| ChainError::Codec(format!("escrow encode: {e}")))?;
+    ctx.set_escrow(job_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: ESCROW_SETTLE_GAS,
+    })
+}
+
+/// Mint block rewards for a settled job. The proposer includes this
+/// tx in the block body; the amount is drawn from the epoch emission
+/// budget (enforced by the caller in commit_block, not here — the
+/// apply layer just credits the accounts).
+fn apply_reward_mint(
+    ctx: &mut BlockCtx<'_>,
+    _job_id: &JobId,
+    total_reward: Amount,
+    compute_addr: &Address,
+    verifier_addr: &Address,
+    router_addr: &Address,
+    treasury_addr: &Address,
+) -> Result<TxOutcome> {
+    if total_reward == 0 {
+        return Ok(TxOutcome::Applied {
+            gas_used: REWARD_MINT_GAS,
+        });
+    }
+    credit_reward_split(
+        ctx,
+        total_reward,
+        compute_addr,
+        verifier_addr,
+        router_addr,
+        treasury_addr,
+    )?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REWARD_MINT_GAS * 6,
+    })
+}
+
+/// Credit the 75/7/5/5/3/5 reward split to the given addresses.
+/// `burned` (3%) is dropped — not credited anywhere.
+/// `delegators` (5%) is TODO: pro-rata split across delegators of
+/// the compute node. For now it goes to the compute address as a
+/// simplification; Phase 2 wires the delegation registry.
+fn credit_reward_split(
+    ctx: &mut BlockCtx<'_>,
+    total: Amount,
+    compute_addr: &Address,
+    verifier_addr: &Address,
+    router_addr: &Address,
+    treasury_addr: &Address,
+) -> Result<()> {
+    let compute = total * 75 / 100;
+    let verifier = total * 7 / 100;
+    let router = total * 5 / 100;
+    let burned = total * 3 / 100;
+    let delegators = total * 5 / 100;
+    let treasury = total - compute - verifier - router - burned - delegators;
+
+    // Compute + delegators (simplified: all to compute for now).
+    let compute_total = compute + delegators;
+
+    for (addr, amount) in [
+        (compute_addr, compute_total),
+        (verifier_addr, verifier),
+        (router_addr, router),
+        (treasury_addr, treasury),
+    ] {
+        if amount > 0 {
+            let mut acct = ctx.get_account(addr)?.unwrap_or_default();
+            acct.balance = acct.balance.saturating_add(amount);
+            ctx.set_account(addr, &acct)?;
+        }
+    }
+    // `burned` is intentionally not credited anywhere.
+    Ok(())
+}
+
 fn derive_address_from_signer(signer: &arknet_common::types::PubKey) -> Address {
     let digest = arknet_crypto::hash::blake3(&signer.bytes);
     let mut out = [0u8; 20];

@@ -26,6 +26,7 @@ pub mod apply;
 pub mod block;
 pub mod bootstrap;
 pub mod errors;
+pub mod escrow_entry;
 pub mod fee_market;
 pub mod genesis;
 pub mod receipt;
@@ -43,6 +44,7 @@ pub use bootstrap::{
     in_bootstrap_epoch, BOOTSTRAP_MAX_BLOCKS, BOOTSTRAP_VALIDATOR_TARGET, EPOCH_LENGTH_BLOCKS,
 };
 pub use errors::{ChainError, Result};
+pub use escrow_entry::{EscrowEntry, EscrowState, ESCROW_TIMEOUT_BLOCKS};
 pub use fee_market::{next_base_fee, BASE_FEE_MAX_CHANGE_DENOM, MIN_BASE_FEE};
 pub use genesis::{load_genesis, GenesisConfig, GenesisParams, GenesisValidator};
 pub use receipt::{

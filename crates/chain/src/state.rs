@@ -52,6 +52,8 @@ const CF_UNBONDINGS: &str = "unbondings";
 /// landed at. `Transaction::ReceiptBatch` rejects any receipt whose
 /// `job_id` is already present — §6's "seen exactly once" invariant.
 const CF_RECEIPTS_SEEN: &str = "receipts_seen";
+/// Escrow entries keyed by `job_id` (32 bytes).
+const CF_ESCROWS: &str = "escrows";
 
 // ─── Value wrapper for SMT account leaves ─────────────────────────────────
 
@@ -167,6 +169,7 @@ impl State {
             CF_META,
             CF_UNBONDINGS,
             CF_RECEIPTS_SEEN,
+            CF_ESCROWS,
         ]
         .iter()
         .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
@@ -613,6 +616,34 @@ impl BlockCtx<'_> {
         let cf = self.state.cf(CF_RECEIPTS_SEEN)?;
         self.batch.put_cf(cf, job_id.0, height.to_be_bytes());
         self.receipt_seen_overlay.insert(job_id.0, height);
+        Ok(())
+    }
+
+    /// Read an escrow entry by job id.
+    pub fn get_escrow(&self, job_id: &JobId) -> Result<Option<Vec<u8>>> {
+        let cf = self.state.cf(CF_ESCROWS)?;
+        match self
+            .state
+            .db
+            .get_cf(cf, job_id.0)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get escrow: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+        }
+    }
+
+    /// Write an escrow entry.
+    pub fn set_escrow(&mut self, job_id: &JobId, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_ESCROWS)?;
+        self.batch.put_cf(cf, job_id.0, data);
+        Ok(())
+    }
+
+    /// Delete an escrow entry (after settle or refund).
+    pub fn delete_escrow(&mut self, job_id: &JobId) -> Result<()> {
+        let cf = self.state.cf(CF_ESCROWS)?;
+        self.batch.delete_cf(cf, job_id.0);
         Ok(())
     }
 
