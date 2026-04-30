@@ -9,8 +9,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
 use arknet_common::types::{
-    Address, Amount, Gas, Hash256, Height, NodeId, Nonce, PoolId, PubKey, Signature, Timestamp,
-    TxHash, DOMAIN_TX,
+    Address, Amount, Gas, Hash256, Height, NodeId, Nonce, PoolId, PubKey, Signature, TeeCapability,
+    Timestamp, TxHash, DOMAIN_TX,
 };
 use arknet_crypto::hash::blake3;
 
@@ -300,6 +300,28 @@ pub enum Transaction {
         /// Output token count (for audit trail).
         output_tokens: u32,
     },
+    /// Register (or update) a compute node's TEE capability on-chain.
+    ///
+    /// The `capability` carries a platform-specific attestation quote
+    /// and an enclave-bound public key. Users encrypt prompts to the
+    /// enclave key for confidential inference — the host OS never sees
+    /// plaintext.
+    ///
+    /// At genesis the chain validates structural well-formedness
+    /// (non-empty quote, bounded size). Full cryptographic verification
+    /// against Intel/AMD root CAs is activated by governance once the
+    /// verification library is audited.
+    ///
+    /// Faking a TEE attestation (claiming TEE but serving outside an
+    /// enclave) is slashable under `FakeTeeAttestation` — 100% of stake.
+    RegisterTeeCapability {
+        /// Node registering TEE support.
+        node_id: NodeId,
+        /// Operator address (signer).
+        operator: Address,
+        /// TEE attestation + enclave-bound pubkey.
+        capability: TeeCapability,
+    },
 }
 
 impl Transaction {
@@ -438,6 +460,23 @@ mod tests {
             proposal_id: 42,
             voter: Address::new([0xdd; 20]),
             choice: VoteChoice::Yes,
+        };
+        let bytes = borsh::to_vec(&tx).unwrap();
+        let decoded: Transaction = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn register_tee_borsh_roundtrip() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let tx = Transaction::RegisterTeeCapability {
+            node_id: NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: vec![0xde; 64],
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
         };
         let bytes = borsh::to_vec(&tx).unwrap();
         let decoded: Transaction = borsh::from_slice(&bytes).unwrap();

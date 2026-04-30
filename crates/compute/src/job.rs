@@ -31,6 +31,10 @@ use crate::attestation::HashChainBuilder;
 use crate::errors::{ComputeError, Result};
 use crate::wire::{InferenceJobEvent, InferenceJobRequest, StopKind};
 
+/// Optional enclave key handle for TEE-capable compute nodes.
+/// When set, the runner can decrypt `encrypted_prompt` payloads.
+pub type EnclaveKey = Option<Arc<arknet_crypto::keys::KeyExchangeSecret>>;
+
 /// Capped buffer for streamed [`InferenceJobEvent`]s between the
 /// compute task and the caller.
 pub const JOB_EVENT_BUFFER: usize = 64;
@@ -48,6 +52,7 @@ pub const NONCE_CACHE_CAP: usize = 8_192;
 pub struct ComputeJobRunner {
     engine: InferenceEngine,
     nonces: Arc<Mutex<NonceCache>>,
+    enclave_key: EnclaveKey,
 }
 
 impl ComputeJobRunner {
@@ -56,6 +61,19 @@ impl ComputeJobRunner {
         Self {
             engine,
             nonces: Arc::new(Mutex::new(NonceCache::new(NONCE_CACHE_CAP))),
+            enclave_key: None,
+        }
+    }
+
+    /// Build a TEE-capable runner with an enclave decryption key.
+    pub fn with_enclave_key(
+        engine: InferenceEngine,
+        key: arknet_crypto::keys::KeyExchangeSecret,
+    ) -> Self {
+        Self {
+            engine,
+            nonces: Arc::new(Mutex::new(NonceCache::new(NONCE_CACHE_CAP))),
+            enclave_key: Some(Arc::new(key)),
         }
     }
 
@@ -78,9 +96,36 @@ impl ComputeJobRunner {
         job_id: JobId,
         now_ms: Timestamp,
     ) -> Result<impl Stream<Item = InferenceJobEvent> + Send + 'static> {
+        // Decrypt encrypted prompt if present (TEE confidential inference).
+        let prompt = if let Some(ref envelope) = req.encrypted_prompt {
+            let key = self.enclave_key.as_ref().ok_or_else(|| {
+                ComputeError::BadRequest(
+                    "encrypted prompt received but node has no enclave key".into(),
+                )
+            })?;
+            let sealed =
+                arknet_crypto::aead::SealedPrompt {
+                    ephemeral_pubkey: envelope.ephemeral_pubkey.as_slice().try_into().map_err(
+                        |_| ComputeError::BadRequest("bad ephemeral pubkey length".into()),
+                    )?,
+                    nonce: envelope
+                        .nonce
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| ComputeError::BadRequest("bad nonce length".into()))?,
+                    ciphertext: envelope.ciphertext.clone(),
+                };
+            let plaintext = arknet_crypto::aead::open_prompt(&sealed, key)
+                .map_err(|e| ComputeError::BadRequest(format!("prompt decryption failed: {e}")))?;
+            String::from_utf8(plaintext)
+                .map_err(|e| ComputeError::BadRequest(format!("decrypted prompt not UTF-8: {e}")))?
+        } else {
+            req.prompt.clone()
+        };
+
         // Sanity checks on the request shape before we spend any model
         // time.
-        if req.prompt.is_empty() {
+        if prompt.is_empty() {
             return Err(ComputeError::BadRequest("empty prompt".into()));
         }
         if req.max_tokens == 0 {
@@ -114,7 +159,7 @@ impl ComputeJobRunner {
             InferenceMode::Serving
         };
         let inference_req = InferenceRequest {
-            prompt: req.prompt,
+            prompt,
             max_tokens: req.max_tokens,
             mode,
             sampling: if mode == InferenceMode::Deterministic {

@@ -16,6 +16,7 @@ pub mod init;
 pub mod model_cmd;
 pub mod start;
 pub mod status;
+pub mod tee;
 pub mod wallet;
 
 /// Top-level arguments shared across every subcommand.
@@ -89,6 +90,10 @@ pub enum Command {
     /// Wallet — create keys, check balance, send ARK.
     #[command(subcommand)]
     Wallet(wallet::WalletCmd),
+
+    /// TEE — manage enclave keys and register TEE capability.
+    #[command(subcommand)]
+    Tee(tee::TeeCmd),
 }
 
 /// Dispatch a parsed [`Cli`] to the matching handler.
@@ -101,5 +106,6 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::Config(cmd) => config_cmd::run(cmd, cli.data_dir.as_deref()).await,
         Command::Model(cmd) => model_cmd::run(cmd, cli.data_dir.as_deref()).await,
         Command::Wallet(cmd) => wallet::run(cmd, cli.data_dir.as_deref()).await,
+        Command::Tee(cmd) => tee::run(cmd, cli.data_dir.as_deref()).await,
     }
 }

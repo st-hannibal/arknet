@@ -33,6 +33,7 @@
   <a href="/docs/tokenomics.html">Tokenomics</a>
   <a href="/docs/models.html">Models</a>
   <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/privacy.html">Privacy</a>
   <a href="/explorer.html">Explorer</a>
   <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
 </nav>
@@ -92,6 +93,28 @@ validator = true</pre>
 
 <div class="note">
 <p><strong>Want to run a public gateway?</strong> Change <code>rpc_listen</code> to <code>"0.0.0.0:26657"</code> in <code>node.toml</code>. Users can send inference requests through you and you earn the 5% router cut. This is how community gateways work — just a node with a public RPC.</p>
+</div>
+
+<h2>Confidential inference (TEE)</h2>
+<p>If your server has Intel TDX or AMD SEV-SNP hardware, you can offer confidential inference — prompts are encrypted to your enclave and even your host OS cannot read them.</p>
+
+<h3>1. Generate enclave keypair</h3>
+<pre>arknet tee keygen</pre>
+<p>This creates <code>~/.arknet/keys/enclave.key</code> — an X25519 keypair. Users encrypt prompts to this key.</p>
+
+<h3>2. Register TEE on-chain</h3>
+<pre>arknet tee register --platform intel-tdx --quote-file /path/to/attestation.bin</pre>
+<p>This submits a <code>RegisterTeeCapability</code> transaction with your attestation quote and enclave public key.</p>
+
+<h3>3. Enable in config</h3>
+<pre>[tee]
+enabled = true
+platform = "intel-tdx"</pre>
+<pre>arknet start --role compute</pre>
+<p>Your node is now advertised as TEE-capable. Users sending <code>prefer_tee: true</code> requests are routed to you. TEE-verified jobs earn <strong>1.5x emission rewards</strong>.</p>
+
+<div class="note">
+<p><strong>No TEE hardware?</strong> No problem. Standard compute nodes still protect prompts via Noise-encrypted P2P and protocol-level prompt isolation. TEE adds hardware-enforced confidentiality on top. See <a href="/docs/privacy.html">Privacy &amp; Security</a> for the full model.</p>
 </div>
 
 <h2>Verify it's working</h2>

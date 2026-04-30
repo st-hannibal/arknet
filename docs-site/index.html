@@ -108,6 +108,7 @@
   <a href="/docs/tokenomics.html">Tokenomics</a>
   <a href="/docs/models.html">Models</a>
   <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/privacy.html">Privacy</a>
   <a href="/explorer.html">Explorer</a>
   <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
 </nav>
@@ -172,6 +173,24 @@ verifier  = false</pre>
   <h2>Simple networking</h2>
   <p>Open <strong>one port</strong> (26656 P2P) — that's it. Your node discovers peers, gossips blocks, and routes inference automatically. All P2P traffic is Noise-encrypted. The RPC port (26657) stays private to you unless you choose to run a public gateway.</p>
 
+  <h2>Three-tier privacy</h2>
+  <p>Your prompts are private at every layer:</p>
+  <div class="grid">
+    <div class="card">
+      <h3>Transport encryption</h3>
+      <p>All P2P traffic uses Noise protocol. Network eavesdroppers see nothing.</p>
+    </div>
+    <div class="card">
+      <h3>Prompt isolation</h3>
+      <p>Only the assigned compute node sees your prompt. Validators, routers, and verifiers see hashes — never content.</p>
+    </div>
+    <div class="card">
+      <h3>Confidential inference (TEE)</h3>
+      <p>Pass <code>prefer_tee: true</code> to route to hardware enclaves (Intel TDX / AMD SEV-SNP). Even the host OS cannot see your prompt — encrypted in enclave memory.</p>
+    </div>
+  </div>
+  <p>For absolute privacy: run your own local node. Inference runs on your hardware, no network, no tokens, prompts never leave your machine. <a href="/docs/privacy.html">Full privacy model</a></p>
+
   <h2>10 models at genesis</h2>
   <p>From edge devices to data centers — all GGUF format, verified by SHA-256:</p>
   <ul>
@@ -185,7 +204,7 @@ verifier  = false</pre>
   <h2>The numbers</h2>
   <div class="grid">
     <div class="card stat"><div class="num">1B</div><div class="label">ARK hard cap</div></div>
-    <div class="card stat"><div class="num">552</div><div class="label">Tests passing</div></div>
+    <div class="card stat"><div class="num">575</div><div class="label">Tests passing</div></div>
     <div class="card stat"><div class="num">0</div><div class="label">Tokens premined</div></div>
     <div class="card stat"><div class="num">75%</div><div class="label">To compute operators</div></div>
   </div>

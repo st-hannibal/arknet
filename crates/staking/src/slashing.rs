@@ -70,6 +70,10 @@ pub enum Offense {
     /// Verifier raised a dispute that resolved against them.
     /// §10: 10% of stake.
     FalseDispute,
+    /// Node claimed TEE capability but served inference outside a real
+    /// enclave, or submitted a forged attestation quote.
+    /// §10: 100% of stake.
+    FakeTeeAttestation,
 }
 
 impl Offense {
@@ -86,6 +90,7 @@ impl Offense {
             Offense::RepeatedTimeouts => 2,
             Offense::ExtendedDowntime => 1,
             Offense::FalseDispute => 10,
+            Offense::FakeTeeAttestation => 100,
         }
     }
 }
@@ -230,5 +235,6 @@ mod tests {
         assert_eq!(Offense::RepeatedTimeouts.penalty_percent(), 2);
         assert_eq!(Offense::ExtendedDowntime.penalty_percent(), 1);
         assert_eq!(Offense::FalseDispute.penalty_percent(), 10);
+        assert_eq!(Offense::FakeTeeAttestation.penalty_percent(), 100);
     }
 }

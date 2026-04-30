@@ -263,7 +263,7 @@ fn epoch_boundary_mint(
 
     let mut total_minted: Amount = 0;
     for pr in &pending {
-        let block_reward = arknet_payments::rewards::compute_block_reward(
+        let base_reward = arknet_payments::rewards::compute_block_reward(
             pr.output_tokens,
             per_token,
             arknet_payments::rewards::ModelCategory::Text,
@@ -272,6 +272,9 @@ fn epoch_boundary_mint(
             100,
             9_500,
         );
+
+        // TEE-verified jobs earn a multiplier on emission (1.5x at genesis).
+        let block_reward = base_reward * pr.tee_multiplier_bps as u128 / 10_000;
 
         let minted = emission.try_mint(block_reward);
         if minted == 0 {

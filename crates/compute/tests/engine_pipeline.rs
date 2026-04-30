@@ -122,6 +122,8 @@ fn request_for(prompt: &str, nonce: u64) -> InferenceJobRequest {
         timestamp_ms: 1_000,
         user_pubkey: PubKey::ed25519([0xab; 32]),
         signature: Signature::ed25519([0; 64]),
+        prefer_tee: false,
+        encrypted_prompt: None,
     }
 }
 

@@ -11,7 +11,9 @@
 
 use arknet_chain::apply::{apply_tx, RejectReason, TxOutcome};
 use arknet_chain::state::State;
-use arknet_chain::{ComputeProof, InferenceReceipt, Quantization, SignedTransaction, Transaction};
+use arknet_chain::{
+    ComputeProof, InferenceReceipt, Quantization, SignedTransaction, Transaction, VerificationTier,
+};
 use arknet_common::types::{
     Address, BlockHash, JobId, NodeId, PoolId, PubKey, Signature, SignatureScheme,
 };
@@ -64,6 +66,8 @@ fn build_receipt(job: JobId, claimed_output_hash: [u8; 32]) -> InferenceReceipt 
         seed: 0,
         compute_proof: ComputeProof::HashChain(vec![[0; 32]]),
         tee_attestation: None,
+        verification_tier: VerificationTier::Optimistic,
+        prompt_encrypted: false,
         timestamp_start: 1,
         timestamp_end: 2,
         compute_signature: Signature::new(SignatureScheme::Ed25519, vec![0xaa; 64]).unwrap(),

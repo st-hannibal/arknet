@@ -64,6 +64,9 @@ const CF_VOTES: &str = "votes";
 /// On-chain model registry keyed by `model_id` (UTF-8 string bytes).
 /// Value: borsh-encoded `OnChainModelManifest`.
 const CF_MODELS: &str = "models";
+/// TEE capability registry keyed by `node_id` (32 bytes).
+/// Value: borsh-encoded `TeeCapability`.
+const CF_TEE: &str = "tee";
 
 // ─── Value wrapper for SMT account leaves ─────────────────────────────────
 
@@ -184,6 +187,7 @@ impl State {
             CF_PROPOSALS,
             CF_VOTES,
             CF_MODELS,
+            CF_TEE,
         ]
         .iter()
         .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
@@ -493,6 +497,47 @@ impl State {
             let m: crate::transactions::OnChainModelManifest = borsh::from_slice(&v)
                 .map_err(|e| ChainError::Codec(format!("model decode: {e}")))?;
             out.push(m);
+        }
+        Ok(out)
+    }
+
+    /// Look up a node's TEE capability by node id.
+    pub fn get_tee_capability(
+        &self,
+        node_id: &NodeId,
+    ) -> Result<Option<arknet_common::types::TeeCapability>> {
+        let cf = self.cf(CF_TEE)?;
+        match self
+            .db
+            .get_cf(cf, node_id.as_bytes())
+            .map_err(|e| ChainError::Codec(format!("rocksdb get tee: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => {
+                let cap: arknet_common::types::TeeCapability = borsh::from_slice(&bytes)
+                    .map_err(|e| ChainError::Codec(format!("tee decode: {e}")))?;
+                Ok(Some(cap))
+            }
+        }
+    }
+
+    /// Iterate all TEE-capable nodes. Used by the router to find
+    /// candidates that support confidential inference.
+    pub fn iter_tee_capabilities(
+        &self,
+    ) -> Result<Vec<(NodeId, arknet_common::types::TeeCapability)>> {
+        let cf = self.cf(CF_TEE)?;
+        let mut out = Vec::new();
+        for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (k, v) = kv.map_err(|e| ChainError::Codec(format!("rocksdb iter tee: {e}")))?;
+            if k.len() != 32 {
+                continue;
+            }
+            let mut node_bytes = [0u8; 32];
+            node_bytes.copy_from_slice(&k);
+            let cap: arknet_common::types::TeeCapability =
+                borsh::from_slice(&v).map_err(|e| ChainError::Codec(format!("tee decode: {e}")))?;
+            out.push((NodeId::new(node_bytes), cap));
         }
         Ok(out)
     }
@@ -814,6 +859,27 @@ impl BlockCtx<'_> {
         self.batch
             .put_cf(cf, b"next_proposal_id", next.to_be_bytes());
         Ok(())
+    }
+
+    /// Write a TEE capability record for a node.
+    pub fn set_tee_capability(&mut self, node_id: &NodeId, data: &[u8]) -> Result<()> {
+        let cf = self.state.cf(CF_TEE)?;
+        self.batch.put_cf(cf, node_id.as_bytes(), data);
+        Ok(())
+    }
+
+    /// Read a TEE capability record (committed state).
+    pub fn get_tee_capability(&self, node_id: &NodeId) -> Result<Option<Vec<u8>>> {
+        let cf = self.state.cf(CF_TEE)?;
+        match self
+            .state
+            .db
+            .get_cf(cf, node_id.as_bytes())
+            .map_err(|e| ChainError::Codec(format!("rocksdb get tee: {e}")))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+        }
     }
 
     /// Write a model registry entry.

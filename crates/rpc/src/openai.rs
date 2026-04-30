@@ -39,6 +39,14 @@ pub struct ChatCompletionRequest {
     /// Number of completions (arknet only supports 1).
     #[serde(default = "default_n")]
     pub n: u32,
+    /// arknet extension: route only to TEE-capable nodes for
+    /// confidential inference. Prompts are encrypted to the enclave's
+    /// pubkey — the host OS never sees plaintext.
+    ///
+    /// Usage with OpenAI client: `extra_body={"prefer_tee": True}`.
+    /// Ignored by non-arknet endpoints.
+    #[serde(default)]
+    pub prefer_tee: bool,
 }
 
 fn default_max_tokens() -> u32 {
@@ -277,6 +285,27 @@ mod tests {
         assert_eq!(req.max_tokens, 100);
         let stop = req.stop.unwrap().into_vec();
         assert_eq!(stop, vec!["<|end|>"]);
+    }
+
+    #[test]
+    fn chat_request_prefer_tee_defaults_false() {
+        let json = r#"{
+            "model": "test",
+            "messages": [{"role": "user", "content": "hi"}]
+        }"#;
+        let req: ChatCompletionRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.prefer_tee);
+    }
+
+    #[test]
+    fn chat_request_prefer_tee_explicit() {
+        let json = r#"{
+            "model": "test",
+            "messages": [{"role": "user", "content": "hi"}],
+            "prefer_tee": true
+        }"#;
+        let req: ChatCompletionRequest = serde_json::from_str(json).unwrap();
+        assert!(req.prefer_tee);
     }
 
     #[test]

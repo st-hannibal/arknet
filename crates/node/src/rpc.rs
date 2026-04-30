@@ -247,6 +247,16 @@ async fn chat_completions(
         return Err((status, Json(serde_json::to_value(body.0).unwrap())));
     }
 
+    if req.prefer_tee && !state.runtime.cfg.tee.enabled {
+        let (status, body) = error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "prefer_tee requested but this node has no TEE capability. \
+             Route through a TEE-capable gateway or remove prefer_tee.",
+            "tee_unavailable",
+        );
+        return Err((status, Json(serde_json::to_value(body.0).unwrap())));
+    }
+
     let model_ref = ModelRef::parse(&req.model).map_err(|e| {
         let (status, body) = error_response(
             StatusCode::BAD_REQUEST,

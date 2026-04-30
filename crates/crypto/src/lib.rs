@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod aead;
 pub mod errors;
 pub mod hash;
 pub mod kdf;
@@ -27,6 +28,7 @@ pub mod threshold;
 pub mod vrf;
 
 // Ergonomic re-exports.
+pub use aead::{open_prompt, seal_prompt, SealedPrompt, NONCE_LEN, TAG_LEN};
 pub use errors::{CryptoError, Result};
 pub use hash::{
     blake3, blake3_keyed, sha256, Blake3Digest, Blake3Stream, Sha256Digest, Sha256Stream,

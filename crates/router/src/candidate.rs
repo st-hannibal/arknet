@@ -66,6 +66,10 @@ pub struct Candidate {
     pub last_seen_ms: Timestamp,
     /// Dispatcher handle for sending the job.
     pub dispatcher: BoxedDispatcher,
+    /// `true` if this node has a verified TEE capability registered
+    /// on-chain. The router uses this to filter for confidential
+    /// inference requests (`prefer_tee = true`).
+    pub supports_tee: bool,
 }
 
 impl Candidate {
@@ -209,6 +213,7 @@ mod tests {
             model_refs: vec!["local/stories260K".into()],
             last_seen_ms: now,
             dispatcher: Arc::new(UnreachableDispatcher),
+            supports_tee: false,
         }
     }
 

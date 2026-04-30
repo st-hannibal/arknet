@@ -120,6 +120,26 @@ This is the same model as every blockchain: Bitcoin exposes port 8333, Ethereum 
 | **Revenue** | Goes to one company | 75% to compute, rest split across network |
 | **Models** | Vendor-locked | Open registry, any GGUF model |
 | **Data** | You trust the provider | Encrypted P2P, prompts never touch consensus |
+| **Confidentiality** | Trust the provider | TEE enclaves — even host OS can't read prompts |
+
+## Privacy — three tiers
+
+| Tier | What it does | Available |
+|------|-------------|-----------|
+| **Transport** | Noise-encrypted P2P. Eavesdroppers see nothing. | Genesis |
+| **Prompt isolation** | Only the assigned compute node sees your prompt. Validators, routers, verifiers see hashes — never content. | Genesis |
+| **Confidential inference (TEE)** | Prompts encrypted to hardware enclave (Intel TDX / AMD SEV-SNP). Even the host OS cannot read them. | Genesis (protocol ready) |
+
+```python
+# Request confidential inference — one extra parameter
+response = client.chat.completions.create(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Confidential question"}],
+    extra_body={"prefer_tee": True},
+)
+```
+
+When `prefer_tee` is set, the router only picks TEE-capable nodes. No silent downgrade — if no TEE node is available, you get a clear error. For absolute privacy, run your own local node (free, no network, prompts never leave your machine).
 
 ## Fair launch
 
@@ -145,7 +165,7 @@ Full list with SHA256 digests: [models](https://arknet.arkengel.com/docs/models)
 
 ## Status
 
-**552 tests. 0 blockers. Validator producing blocks.**
+**575 tests. 0 blockers. Validator producing blocks.**
 
 | Milestone | Status |
 |-----------|--------|
@@ -156,6 +176,7 @@ Full list with SHA256 digests: [models](https://arknet.arkengel.com/docs/models)
 | Bootstrap emission (free-tier mints ARK) | Done |
 | Wallet CLI + block explorer | Done |
 | Multi-node smoke test (17/17 pass) | Done |
+| TEE confidential inference (encrypt, route, decrypt, slash) | Done |
 | **Genesis** | **Next** |
 
 ## License

@@ -571,6 +571,64 @@ impl Signature {
     }
 }
 
+// ─── TEE platform + capability ───────────────────────────────────────
+
+/// Trusted Execution Environment platform identifier.
+///
+/// The chain records which TEE platform a compute node is attested on
+/// so verifiers know which root-of-trust CA to check the quote against.
+#[repr(u8)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+)]
+#[borsh(use_discriminant = true)]
+pub enum TeePlatform {
+    /// Intel Trust Domain Extensions (TDX). Available on 4th-gen Xeon+.
+    IntelTdx = 0x01,
+    /// AMD Secure Encrypted Virtualization — Secure Nested Paging.
+    AmdSevSnp = 0x02,
+    /// ARM Confidential Compute Architecture (CCA). Reserved.
+    ArmCca = 0x03,
+}
+
+/// On-chain TEE capability record for a compute node.
+///
+/// Submitted via `Transaction::RegisterTeeCapability`. The `quote`
+/// bytes are platform-specific attestation evidence; at genesis the
+/// chain validates structural well-formedness (non-empty, bounded
+/// size). Full cryptographic verification against Intel/AMD root CAs
+/// is activated by governance once the verification library is audited.
+///
+/// `enclave_pubkey` is generated *inside* the enclave and bound to the
+/// attestation quote. Users encrypt prompts to this key — the host OS
+/// never sees plaintext.
+#[derive(
+    Clone, PartialEq, Eq, Hash, Debug, BorshSerialize, BorshDeserialize, Serialize, Deserialize,
+)]
+pub struct TeeCapability {
+    /// Which TEE platform produced the attestation.
+    pub platform: TeePlatform,
+    /// Raw attestation quote bytes (Intel TDX report / AMD SNP attestation).
+    pub quote: Vec<u8>,
+    /// Public key generated inside the enclave, bound to the quote.
+    /// Users encrypt prompts to this key for confidential inference.
+    pub enclave_pubkey: PubKey,
+}
+
+/// Maximum size of a TEE attestation quote (16 KiB). Intel TDX quotes
+/// are typically ~5 KB; AMD SEV-SNP reports ~4 KB. This cap prevents
+/// abuse while leaving room for certificate chains.
+pub const MAX_TEE_QUOTE_BYTES: usize = 16 * 1024;
+
 // ─── Role bitmap ──────────────────────────────────────────────────────────
 
 /// Bitmap of active roles on a node. Multiple roles can be enabled simultaneously.
@@ -798,6 +856,25 @@ mod tests {
         assert_ne!(DOMAIN_BLOCK, DOMAIN_TX_ROOT);
         assert_ne!(DOMAIN_BLOCK, DOMAIN_RECEIPT_ROOT);
         assert_ne!(DOMAIN_TX_ROOT, DOMAIN_RECEIPT_ROOT);
+    }
+
+    #[test]
+    fn tee_platform_discriminants_are_stable() {
+        assert_eq!(TeePlatform::IntelTdx as u8, 0x01);
+        assert_eq!(TeePlatform::AmdSevSnp as u8, 0x02);
+        assert_eq!(TeePlatform::ArmCca as u8, 0x03);
+    }
+
+    #[test]
+    fn tee_capability_borsh_roundtrip() {
+        let cap = TeeCapability {
+            platform: TeePlatform::IntelTdx,
+            quote: vec![0xde, 0xad, 0xbe, 0xef],
+            enclave_pubkey: PubKey::ed25519([0x99; 32]),
+        };
+        let bytes = borsh::to_vec(&cap).unwrap();
+        let decoded: TeeCapability = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(cap, decoded);
     }
 
     #[test]

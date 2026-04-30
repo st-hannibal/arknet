@@ -10,6 +10,12 @@ use arknet_common::types::{Address, Amount, JobId};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
+/// TEE reward multiplier: 1.0x (no TEE). 10000 basis points = 1.0x.
+pub const TEE_MULTIPLIER_NONE: u32 = 10_000;
+
+/// TEE reward multiplier: 1.5x for TEE-verified jobs.
+pub const TEE_MULTIPLIER_TEE: u32 = 15_000;
+
 /// A receipt whose escrow has been settled but whose block reward
 /// hasn't been minted yet. Queued until the next epoch boundary.
 #[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
@@ -30,4 +36,14 @@ pub struct PendingReward {
     pub router_addr: Address,
     /// Treasury address.
     pub treasury_addr: Address,
+    /// Reward multiplier in basis points (10000 = 1.0x, 15000 = 1.5x).
+    /// TEE-verified jobs earn more from emission to incentivize
+    /// confidential inference.
+    #[serde(default = "default_tee_multiplier")]
+    pub tee_multiplier_bps: u32,
+}
+
+/// Default multiplier for backward-compatible deserialization.
+fn default_tee_multiplier() -> u32 {
+    TEE_MULTIPLIER_NONE
 }
