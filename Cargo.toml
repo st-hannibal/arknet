@@ -25,7 +25,7 @@ members = [
 ]
 
 [workspace.package]
-version      = "1.0.4"
+version      = "1.0.5"
 edition      = "2021"
 rust-version = "1.86"
 authors      = ["arknet contributors"]
@@ -36,25 +36,25 @@ documentation = "https://arknet.arkengel.com/docs"
 
 [workspace.dependencies]
 # Internal crates
-arknet-common        = { path = "crates/common",        version = "1.0.4" }
-arknet-crypto        = { path = "crates/crypto",        version = "1.0.4" }
-arknet-network       = { path = "crates/network",       version = "1.0.4" }
-arknet-consensus     = { path = "crates/consensus",     version = "1.0.4" }
-arknet-chain         = { path = "crates/chain",         version = "1.0.4" }
-arknet-staking       = { path = "crates/staking",       version = "1.0.4" }
-arknet-governance    = { path = "crates/governance",    version = "1.0.4" }
-arknet-treasury      = { path = "crates/treasury",      version = "1.0.4" }
-arknet-model-manager = { path = "crates/model-manager", version = "1.0.4" }
-arknet-inference     = { path = "crates/inference",     version = "1.0.4" }
-arknet-router        = { path = "crates/router",        version = "1.0.4" }
-arknet-compute       = { path = "crates/compute",       version = "1.0.4" }
-arknet-verifier      = { path = "crates/verifier",      version = "1.0.4" }
-arknet-validator     = { path = "crates/validator",     version = "1.0.4" }
-arknet-receipts      = { path = "crates/receipts",      version = "1.0.4" }
-arknet-payments      = { path = "crates/payments",      version = "1.0.4" }
-arknet-rpc           = { path = "crates/rpc",           version = "1.0.4" }
-arknet-light-client  = { path = "crates/light-client",  version = "1.0.4" }
-arknet-sdk           = { path = "crates/sdk-rust",      version = "1.0.4" }
+arknet-common        = { path = "crates/common",        version = "1.0.5" }
+arknet-crypto        = { path = "crates/crypto",        version = "1.0.5" }
+arknet-network       = { path = "crates/network",       version = "1.0.5" }
+arknet-consensus     = { path = "crates/consensus",     version = "1.0.5" }
+arknet-chain         = { path = "crates/chain",         version = "1.0.5" }
+arknet-staking       = { path = "crates/staking",       version = "1.0.5" }
+arknet-governance    = { path = "crates/governance",    version = "1.0.5" }
+arknet-treasury      = { path = "crates/treasury",      version = "1.0.5" }
+arknet-model-manager = { path = "crates/model-manager", version = "1.0.5" }
+arknet-inference     = { path = "crates/inference",     version = "1.0.5" }
+arknet-router        = { path = "crates/router",        version = "1.0.5" }
+arknet-compute       = { path = "crates/compute",       version = "1.0.5" }
+arknet-verifier      = { path = "crates/verifier",      version = "1.0.5" }
+arknet-validator     = { path = "crates/validator",     version = "1.0.5" }
+arknet-receipts      = { path = "crates/receipts",      version = "1.0.5" }
+arknet-payments      = { path = "crates/payments",      version = "1.0.5" }
+arknet-rpc           = { path = "crates/rpc",           version = "1.0.5" }
+arknet-light-client  = { path = "crates/light-client",  version = "1.0.5" }
+arknet-sdk           = { path = "crates/sdk-rust",      version = "1.0.5" }
 
 # Async runtime
 tokio       = { version = "1.38", features = ["full"] }

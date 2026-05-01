@@ -334,6 +334,11 @@ async fn run(
 
     let mut net_rx = network.subscribe();
 
+    // Skip-block: when consensus has decided and the mempool is empty,
+    // we defer StartHeight. This flag + deadline track that state.
+    let mut waiting_for_tx = false;
+    let mut heartbeat_deadline = Instant::now() + Duration::from_secs(60);
+
     // Kick off consensus for the initial height.
     pending_inputs.push_back(Input::StartHeight(
         cfg.initial_height,
@@ -364,6 +369,8 @@ async fn run(
                 &mut validator_set_hash,
                 &mut last_proposed_drain,
                 &mut decided_block_cache,
+                &mut waiting_for_tx,
+                &mut heartbeat_deadline,
                 &block_events,
                 input,
             )
@@ -389,12 +396,29 @@ async fn run(
             continue;
         }
 
+        // Skip-block: if consensus is idle (decided, empty mempool),
+        // check periodically for new transactions or heartbeat expiry.
+        if waiting_for_tx {
+            let now = Instant::now();
+            if !mempool.lock().is_empty() || now >= heartbeat_deadline {
+                waiting_for_tx = false;
+                let next = Height(current_height.as_u64() + 1);
+                pending_inputs.push_back(Input::StartHeight(next, cfg.validator_set.clone()));
+                continue;
+            }
+        }
+
         // Compute the next timeout deadline.
-        let next_deadline = pending_timeouts
-            .iter()
-            .map(|t| t.deadline)
-            .min()
-            .unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
+        let next_deadline = if waiting_for_tx {
+            // Poll every 100ms for mempool changes while idle.
+            Instant::now() + Duration::from_millis(100)
+        } else {
+            pending_timeouts
+                .iter()
+                .map(|t| t.deadline)
+                .min()
+                .unwrap_or_else(|| Instant::now() + Duration::from_secs(3600))
+        };
 
         tokio::select! {
             _ = shutdown.cancelled() => {
@@ -502,6 +526,8 @@ async fn drive_one_input(
     validator_set_hash: &mut Hash256,
     last_proposed_drain: &mut Option<(Height, Vec<Arc<SignedTransaction>>)>,
     decided_block_cache: &mut Option<Block>,
+    skip_block_waiting: &mut bool,
+    skip_block_deadline: &mut Instant,
     block_events: &tokio::sync::broadcast::Sender<Arc<Block>>,
     input: Input<ArknetContext>,
 ) -> Result<Vec<Input<ArknetContext>>> {
@@ -525,6 +551,8 @@ async fn drive_one_input(
             validator_set_hash,
             last_proposed_drain,
             decided_block_cache,
+            skip_block_waiting,
+            skip_block_deadline,
             block_events,
             &mut follow_ups,
         ).await
@@ -555,6 +583,8 @@ async fn handle_effect(
     validator_set_hash: &mut Hash256,
     last_proposed_drain: &mut Option<(Height, Vec<Arc<SignedTransaction>>)>,
     decided_block_cache: &mut Option<Block>,
+    skip_block_waiting: &mut bool,
+    skip_block_deadline: &mut Instant,
     block_events: &tokio::sync::broadcast::Sender<Arc<Block>>,
     follow_ups: &mut Vec<Input<ArknetContext>>,
 ) -> std::result::Result<Resume<ArknetContext>, malachitebft_core_consensus::Error<ArknetContext>> {
@@ -710,9 +740,18 @@ async fn handle_effect(
                     *last_proposed_drain = None;
                 }
             }
-            // Queue the next height.
-            let next = Height(height.as_u64() + 1);
-            follow_ups.push(Input::StartHeight(next, cfg.validator_set.clone()));
+            tokio::time::sleep(cfg.timeouts.block_interval).await;
+            let single_validator = cfg.validator_set.count() <= 1;
+            if !mempool.lock().is_empty() || !single_validator {
+                *skip_block_waiting = false;
+                let next = Height(height.as_u64() + 1);
+                follow_ups.push(Input::StartHeight(next, cfg.validator_set.clone()));
+            } else {
+                // Skip-block (single-validator only): defer StartHeight
+                // until a tx arrives or heartbeat fires.
+                *skip_block_waiting = true;
+                *skip_block_deadline = Instant::now() + Duration::from_secs(60);
+            }
             Ok(r.resume_with(()))
         }
         Effect::SignVote(vote, r) => {

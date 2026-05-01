@@ -26,6 +26,7 @@ pub mod apply;
 pub mod block;
 pub mod bootstrap;
 pub mod circuit_breaker;
+pub mod da;
 pub mod errors;
 pub mod escrow_entry;
 pub mod fee_market;

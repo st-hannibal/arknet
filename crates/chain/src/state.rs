@@ -646,6 +646,38 @@ impl State {
         }
     }
 
+    /// Delete block bodies and tx index entries for all blocks with
+    /// height < `keep_from`. State tree is untouched — only the raw
+    /// block data and its tx index are removed.
+    pub fn prune_blocks_before(&self, keep_from: u64) -> Result<u64> {
+        let cf_blocks = self.cf(CF_BLOCKS)?;
+        let cf_tx_idx = self.cf(CF_TX_INDEX)?;
+        let mut pruned = 0u64;
+        let start = 0u64.to_be_bytes();
+        let end = keep_from.to_be_bytes();
+        let iter = self.db.iterator_cf(
+            cf_blocks,
+            rocksdb::IteratorMode::From(&start, rocksdb::Direction::Forward),
+        );
+        for item in iter {
+            let (key, val) = item.map_err(|e| ChainError::Codec(format!("prune iter: {e}")))?;
+            if key.as_ref() >= end.as_ref() {
+                break;
+            }
+            if let Ok(block) = borsh::from_slice::<crate::block::Block>(&val) {
+                for tx in &block.txs {
+                    let tx_hash = tx.hash();
+                    let _ = self.db.delete_cf(cf_tx_idx, tx_hash.as_bytes());
+                }
+            }
+            self.db
+                .delete_cf(cf_blocks, &key)
+                .map_err(|e| ChainError::Codec(format!("prune delete: {e}")))?;
+            pruned += 1;
+        }
+        Ok(pruned)
+    }
+
     /// Iterate all governance proposals in `CF_PROPOSALS`.
     ///
     /// Returns `(proposal_id, ProposalRecord)` pairs. Called once per
