@@ -70,6 +70,12 @@ const CF_TEE: &str = "tee";
 /// Public gateway registry keyed by `node_id` (32 bytes).
 /// Value: borsh-encoded `GatewayEntry`.
 const CF_GATEWAYS: &str = "gateways";
+/// Committed blocks keyed by height (u64 BE).
+/// Value: borsh-encoded `Block`.
+const CF_BLOCKS: &str = "blocks";
+/// Transaction index: tx_hash(32) → height(u64 BE).
+/// Allows lookup of which block a transaction landed in.
+const CF_TX_INDEX: &str = "tx_index";
 
 // ─── Value wrapper for SMT account leaves ─────────────────────────────────
 
@@ -193,6 +199,8 @@ impl State {
             CF_MODELS,
             CF_TEE,
             CF_GATEWAYS,
+            CF_BLOCKS,
+            CF_TX_INDEX,
         ]
         .iter()
         .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
@@ -583,6 +591,59 @@ impl State {
             out.push(entry);
         }
         Ok(out)
+    }
+
+    /// Store a committed block by height and index its transactions.
+    pub fn store_block(&self, height: u64, block: &crate::block::Block) -> Result<()> {
+        let cf_blocks = self.cf(CF_BLOCKS)?;
+        let cf_tx_idx = self.cf(CF_TX_INDEX)?;
+        let key = height.to_be_bytes();
+        let val =
+            borsh::to_vec(block).map_err(|e| ChainError::Codec(format!("block encode: {e}")))?;
+        self.db
+            .put_cf(cf_blocks, key, &val)
+            .map_err(|e| ChainError::Codec(format!("rocksdb put block: {e}")))?;
+        for tx in &block.txs {
+            let tx_hash = tx.hash();
+            self.db
+                .put_cf(cf_tx_idx, tx_hash.as_bytes(), key)
+                .map_err(|e| ChainError::Codec(format!("rocksdb put tx_index: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// Retrieve a committed block by height.
+    pub fn get_block(&self, height: u64) -> Result<Option<crate::block::Block>> {
+        let cf = self.cf(CF_BLOCKS)?;
+        let key = height.to_be_bytes();
+        match self
+            .db
+            .get_cf(cf, key)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get block: {e}")))?
+        {
+            Some(v) => {
+                let block: crate::block::Block = borsh::from_slice(&v)
+                    .map_err(|e| ChainError::Codec(format!("block decode: {e}")))?;
+                Ok(Some(block))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Look up a transaction by hash. Returns the block height it landed in.
+    pub fn get_tx_height(&self, tx_hash: &[u8; 32]) -> Result<Option<u64>> {
+        let cf = self.cf(CF_TX_INDEX)?;
+        match self
+            .db
+            .get_cf(cf, tx_hash)
+            .map_err(|e| ChainError::Codec(format!("rocksdb get tx_index: {e}")))?
+        {
+            Some(v) if v.len() == 8 => {
+                let height = u64::from_be_bytes(v[..8].try_into().unwrap());
+                Ok(Some(height))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Iterate all governance proposals in `CF_PROPOSALS`.

@@ -92,6 +92,8 @@ pub async fn serve(bind: SocketAddr, state: RpcState, shutdown: CancellationToke
         .route("/v1/account/:address", get(get_account))
         .route("/v1/tx", post(submit_tx))
         .route("/v1/gateways", get(list_gateways))
+        .route("/v1/block/:height", get(get_block))
+        .route("/v1/tx/:hash", get(get_tx))
         .with_state(state);
 
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
@@ -810,6 +812,169 @@ async fn list_gateways(State(state): State<RpcState>) -> Json<GatewayListRespons
         .collect();
 
     Json(GatewayListResponse { gateways })
+}
+
+// ─── /v1/block/:height ──────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct BlockResponse {
+    height: u64,
+    hash: String,
+    parent_hash: String,
+    state_root: String,
+    tx_root: String,
+    timestamp_ms: u64,
+    tx_count: usize,
+    base_fee: u128,
+    proposer: String,
+    genesis_message: String,
+}
+
+async fn get_block(
+    State(state): State<RpcState>,
+    axum::extract::Path(height): axum::extract::Path<u64>,
+) -> std::result::Result<Json<BlockResponse>, (StatusCode, Json<ErrorBody>)> {
+    let Some(consensus) = state.runtime.consensus.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                error: "consensus engine not running on this node".into(),
+            }),
+        ));
+    };
+    match consensus.get_block(height) {
+        Ok(Some(block)) => Ok(Json(BlockResponse {
+            height: block.header.height,
+            hash: hex::encode(block.hash().as_bytes()),
+            parent_hash: hex::encode(block.header.parent_hash.as_bytes()),
+            state_root: hex::encode(block.header.state_root.as_bytes()),
+            tx_root: hex::encode(block.header.tx_root),
+            timestamp_ms: block.header.timestamp_ms,
+            tx_count: block.txs.len(),
+            base_fee: block.header.base_fee,
+            proposer: format!("{}", block.header.proposer),
+            genesis_message: block.header.genesis_message.clone(),
+        })),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorBody {
+                error: format!("block at height {height} not found"),
+            }),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorBody { error: e }),
+        )),
+    }
+}
+
+// ─── /v1/tx/:hash ───────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct TxLookupResponse {
+    tx_hash: String,
+    block_height: u64,
+    #[serde(rename = "type")]
+    tx_type: String,
+    from: String,
+}
+
+async fn get_tx(
+    State(state): State<RpcState>,
+    axum::extract::Path(hash_hex): axum::extract::Path<String>,
+) -> std::result::Result<Json<TxLookupResponse>, (StatusCode, Json<ErrorBody>)> {
+    let Some(consensus) = state.runtime.consensus.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                error: "consensus engine not running on this node".into(),
+            }),
+        ));
+    };
+    let clean = hash_hex.strip_prefix("0x").unwrap_or(&hash_hex);
+    let hash_bytes: [u8; 32] = hex::decode(clean)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorBody {
+                    error: format!("invalid tx hash hex: {e}"),
+                }),
+            )
+        })?
+        .try_into()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorBody {
+                    error: "tx hash must be 32 bytes (64 hex chars)".into(),
+                }),
+            )
+        })?;
+
+    let height = consensus.get_tx_height(&hash_bytes).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorBody { error: e }),
+        )
+    })?;
+
+    let Some(height) = height else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorBody {
+                error: format!("transaction 0x{clean} not found"),
+            }),
+        ));
+    };
+
+    let block = consensus.get_block(height).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorBody { error: e }),
+        )
+    })?;
+
+    let (tx_type, from) = block
+        .as_ref()
+        .and_then(|b| {
+            b.txs.iter().find_map(|tx| {
+                if hex::encode(tx.hash().as_bytes()) == clean {
+                    let t = classify_tx_type(&tx.tx);
+                    let f = format!("{:?}", tx.signer);
+                    Some((t, f))
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| ("unknown".into(), "unknown".into()));
+
+    Ok(Json(TxLookupResponse {
+        tx_hash: format!("0x{clean}"),
+        block_height: height,
+        tx_type,
+        from,
+    }))
+}
+
+fn classify_tx_type(tx: &arknet_chain::transactions::Transaction) -> String {
+    use arknet_chain::transactions::Transaction;
+    match tx {
+        Transaction::Transfer { .. } => "Transfer",
+        Transaction::StakeOp(_) => "StakeOp",
+        Transaction::ReceiptBatch(_) => "ReceiptBatch",
+        Transaction::RegisterModel { .. } => "RegisterModel",
+        Transaction::GovProposal(_) => "GovProposal",
+        Transaction::GovVote { .. } => "GovVote",
+        Transaction::Dispute(_) => "Dispute",
+        Transaction::EscrowLock { .. } => "EscrowLock",
+        Transaction::EscrowSettle { .. } => "EscrowSettle",
+        Transaction::RewardMint { .. } => "RewardMint",
+        Transaction::RegisterTeeCapability { .. } => "RegisterTeeCapability",
+        Transaction::RegisterGateway { .. } => "RegisterGateway",
+        Transaction::UnregisterGateway { .. } => "UnregisterGateway",
+    }
+    .into()
 }
 
 // `StopReason` is referenced to keep it in scope for downstream
