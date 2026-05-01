@@ -219,6 +219,15 @@ impl ConsensusHandle {
     /// Wait for the next finalized block. Returns an `Arc<Block>` so
     /// multiple subscribers can reference the same allocation. Used by
     /// the verifier role body to scan receipts.
+    /// List all registered public gateways from chain state.
+    pub fn iter_gateways(&self) -> std::result::Result<Vec<arknet_chain::GatewayEntry>, String> {
+        self.chain_state
+            .iter_gateways()
+            .map_err(|e| format!("iter_gateways: {e}"))
+    }
+
+    /// Subscribe to finalized blocks. Returns the next block as `Arc` so
+    /// multiple subscribers can reference the same allocation.
     pub async fn next_finalized_block(&self) -> std::result::Result<Arc<Block>, String> {
         let mut rx = self.block_events.subscribe();
         rx.recv()

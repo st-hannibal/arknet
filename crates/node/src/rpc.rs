@@ -91,6 +91,7 @@ pub async fn serve(bind: SocketAddr, state: RpcState, shutdown: CancellationToke
         .route("/v1/status", get(status))
         .route("/v1/account/:address", get(get_account))
         .route("/v1/tx", post(submit_tx))
+        .route("/v1/gateways", get(list_gateways))
         .with_state(state);
 
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
@@ -771,6 +772,44 @@ async fn submit_tx(
         })),
         Err(msg) => Err((StatusCode::BAD_REQUEST, Json(ErrorBody { error: msg }))),
     }
+}
+
+// ─── /v1/gateways ────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct GatewayListEntry {
+    node_id: String,
+    operator: String,
+    url: String,
+    https: bool,
+    registered_at: u64,
+}
+
+#[derive(Serialize)]
+struct GatewayListResponse {
+    gateways: Vec<GatewayListEntry>,
+}
+
+async fn list_gateways(State(state): State<RpcState>) -> Json<GatewayListResponse> {
+    let entries = state
+        .runtime
+        .consensus
+        .as_ref()
+        .and_then(|c| c.iter_gateways().ok())
+        .unwrap_or_default();
+
+    let gateways = entries
+        .into_iter()
+        .map(|e| GatewayListEntry {
+            node_id: format!("{}", e.node_id),
+            operator: format!("{}", e.operator),
+            url: e.url,
+            https: e.https,
+            registered_at: e.registered_at,
+        })
+        .collect();
+
+    Json(GatewayListResponse { gateways })
 }
 
 // `StopReason` is referenced to keep it in scope for downstream

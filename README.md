@@ -13,31 +13,50 @@
 
 ---
 
-Anyone with a computer earns **ARK** for serving AI models. Any developer queries AI through an OpenAI-compatible API — change one line, get decentralized inference.
+Anyone with a computer earns **ARK** for serving AI models. Any developer queries AI through a familiar API — install the SDK, connect, done.
 
-**Via the decentralized network** (any public gateway):
+**Use the network** (3 lines — the SDK finds nodes automatically):
+```bash
+pip install arknet-sdk
+```
 ```python
-from openai import OpenAI
+from arknet_sdk import Client
 
-# The network routes your request to the best available compute node
-client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
-response = client.chat.completions.create(
+client = Client.connect()    # discovers nodes from the on-chain registry
+response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )
 ```
 
-**Via your own local node** (free, no network, runs on your hardware):
+No URLs to configure, no gateway to find — the SDK reads the blockchain's gateway registry and connects to the best available node. HTTPS preferred, TEE-capable nodes prioritized when you ask for confidential inference.
+
+**Run locally** (free, offline, your hardware):
+```python
+from arknet_sdk import Client
+
+client = Client("http://localhost:26657")    # your own node
+response = client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello from arknet"}],
+)
+```
+
+<details>
+<summary>Advanced: using the raw OpenAI SDK (no arknet SDK needed)</summary>
+
+If you already have an OpenAI integration and don't want to install the arknet SDK, point the OpenAI client at any arknet node directly. You'll need to know a node's URL — find one via `/v1/gateways` on any running node, or run your own.
+
 ```python
 from openai import OpenAI
 
-# Point at your own node — inference runs locally, no tokens spent
-client = OpenAI(base_url="http://localhost:26657/v1", api_key="unused")
+client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
 response = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )
 ```
+</details>
 
 ## How it works
 
@@ -68,11 +87,19 @@ Users never interact with the blockchain directly — the OpenAI API is the inte
 
 ### As a user/developer (no node required)
 
-Point any OpenAI client at a public gateway. The network handles routing, payment, and verification. During the bootstrap period (first 6 months), inference is **free** — the network subsidizes early usage through block emission.
+Install the SDK and connect. The network handles node discovery, routing, payment, and verification — you never need to know any server URLs. During the bootstrap period (first 6 months), inference is **free**.
 
+```bash
+pip install arknet-sdk    # or: npm install arknet-sdk / cargo add arknet-sdk
+```
 ```python
-# Any OpenAI-compatible client works — Python, TypeScript, curl, etc.
-client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
+from arknet_sdk import Client
+
+client = Client.connect()    # auto-discovers nodes from the blockchain
+response = client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello from arknet"}],
+)
 ```
 
 ### As a node operator (earn ARK)
@@ -96,7 +123,7 @@ Every node exposes **one public port** (P2P) and keeps everything else private:
 | **RPC** | 26657 | **No** — localhost only | Your personal dashboard. Query balances, submit transactions, run the explorer. |
 | **Metrics** | 9090 | **No** — localhost only | Prometheus metrics for your monitoring stack. |
 
-**If you want to run a public gateway** (let others send inference through you): change RPC bind to `0.0.0.0:26657` in `node.toml`. You earn the 5% router cut on every job you dispatch. This is how `api.arknet.arkengel.com` works — it's just a node with a public RPC.
+**If you want to run a public gateway** (let others send inference through you): change RPC bind to `0.0.0.0:26657` in `node.toml` and register on-chain. SDKs discover your gateway automatically via `/v1/gateways`. HTTPS gateways earn a 1.2x reward multiplier. You earn the 5% router cut on every job you dispatch.
 
 ```toml
 # ~/.arknet/node.toml — public gateway config

@@ -322,6 +322,29 @@ pub enum Transaction {
         /// TEE attestation + enclave-bound pubkey.
         capability: TeeCapability,
     },
+    /// Register a node as a public gateway (discoverable RPC endpoint).
+    ///
+    /// Operators expose their RPC port to serve user inference requests.
+    /// HTTPS gateways earn a 1.2x reward multiplier on routed jobs.
+    /// Users can request `require_https: true` to only route through
+    /// HTTPS gateways (no silent downgrade).
+    RegisterGateway {
+        /// Node registering as a gateway.
+        node_id: NodeId,
+        /// Operator address (signer).
+        operator: Address,
+        /// Public RPC URL (e.g. `"https://rpc.mynode.com"` or `"http://203.0.113.42:26657"`).
+        url: String,
+        /// `true` if the URL uses HTTPS (TLS-terminated).
+        https: bool,
+    },
+    /// Remove this node from the public gateway registry.
+    UnregisterGateway {
+        /// Node to remove.
+        node_id: NodeId,
+        /// Operator address (signer).
+        operator: Address,
+    },
 }
 
 impl Transaction {

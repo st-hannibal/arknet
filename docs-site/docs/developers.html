@@ -76,9 +76,23 @@
 
 <h2>SDKs</h2>
 
-<h3>Python</h3>
-<pre>from arknet import Client
+<h3>Install</h3>
+<pre># Python
+pip install arknet-sdk
 
+# TypeScript / Node.js
+npm install arknet-sdk
+
+# Rust
+cargo add arknet-sdk</pre>
+
+<h3>Python</h3>
+<pre>from arknet_sdk import Client
+
+# Auto-discover a gateway (recommended for network usage)
+client = Client.connect()
+
+# Or connect to a specific node
 client = Client("http://localhost:26657")
 resp = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
@@ -127,17 +141,15 @@ let resp = client.chat_completion(arknet_sdk::ChatRequest {
 }).await?;
 println!("{}", resp.choices[0].message.content);</pre>
 
-<h3>Any OpenAI client</h3>
-<pre># Via the decentralized network (any public gateway)
-from openai import OpenAI
-client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
-response = client.chat.completions.create(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Hello from arknet"}],
-)</pre>
-<pre># Via your own local node (free, no tokens spent)
-from openai import OpenAI
-client = OpenAI(base_url="http://localhost:26657/v1", api_key="unused")
+<h3>Raw OpenAI SDK (advanced)</h3>
+<p>If you already have an OpenAI integration, point it at any arknet node. You'll need to know a node URL — the arknet SDKs above handle this automatically via <code>Client.connect()</code>.</p>
+<pre>from openai import OpenAI
+
+# Local node (free, no wallet needed)
+client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
+
+# Remote node (find URLs via /v1/gateways on any running node)
+# client = OpenAI(base_url="https://some-gateway:26657/v1", api_key="ark1...")
 response = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
@@ -159,6 +171,8 @@ response = client.chat.completions.create(
   <tr><td><code>GovProposal</code></td><td>Submit governance proposal (10K ARK)</td><td>500,000</td></tr>
   <tr><td><code>GovVote</code></td><td>Vote on a proposal</td><td>30,000</td></tr>
   <tr><td><code>RegisterTeeCapability</code></td><td>Register TEE attestation + enclave pubkey</td><td>200,000</td></tr>
+  <tr><td><code>RegisterGateway</code></td><td>Register as a public gateway (discoverable)</td><td>100,000</td></tr>
+  <tr><td><code>UnregisterGateway</code></td><td>Remove from public gateway registry</td><td>50,000</td></tr>
 </table>
 
 <h2>Building a dApp</h2>
@@ -182,13 +196,15 @@ response = client.chat.completions.create(
 <p>See the <a href="/docs/privacy.html">Privacy &amp; Security</a> page for the full three-tier privacy model, TEE operator guide, and comparison with centralized providers.</p>
 
 <h3>Confidential inference example</h3>
-<pre>from openai import OpenAI
+<pre>from arknet_sdk import Client
 
-client = OpenAI(base_url="https://api.arknet.arkengel.com/v1", api_key="unused")
-response = client.chat.completions.create(
+# Auto-discover an HTTPS + TEE gateway
+client = Client.connect(require_https=True)
+response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Confidential question"}],
-    extra_body={"prefer_tee": True},  # arknet extension
+    prefer_tee=True,      # TEE enclaves only
+    require_https=True,   # HTTPS gateways only
 )</pre>
 <p>When <code>prefer_tee</code> is set, the router only picks TEE-capable nodes. If none are available, you get a clear error — no silent downgrade.</p>
 

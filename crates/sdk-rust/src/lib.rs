@@ -38,6 +38,7 @@ pub use errors::{Result, SdkError};
 pub struct Client {
     base_url: String,
     http: reqwest::Client,
+    api_key: Option<String>,
 }
 
 impl Client {
@@ -45,22 +46,80 @@ impl Client {
     ///
     /// `base_url` should be the node's HTTP root, e.g.
     /// `http://127.0.0.1:3000`. The client appends `/v1/...` paths.
+    /// Create a new client pointing at an arknet node.
+    ///
+    /// Reads wallet address from `ARKNET_WALLET` env var if not
+    /// provided explicitly via [`ConnectOptions`].
     pub fn new(base_url: &str) -> Result<Self> {
         let base_url = base_url.trim_end_matches('/').to_string();
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
             .map_err(|e| SdkError::Http(e.to_string()))?;
-        Ok(Self { base_url, http })
+        let api_key = std::env::var("ARKNET_WALLET").ok();
+        Ok(Self {
+            base_url,
+            http,
+            api_key,
+        })
+    }
+
+    /// Auto-discover a gateway from the on-chain registry.
+    ///
+    /// Contacts each seed URL's `/v1/gateways`, picks the best
+    /// reachable gateway (HTTPS preferred), and returns a connected client.
+    pub async fn connect(opts: ConnectOptions) -> Result<Self> {
+        let seeds = if opts.seeds.is_empty() {
+            vec!["https://api.arknet.arkengel.com".to_string()]
+        } else {
+            opts.seeds
+        };
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| SdkError::Http(e.to_string()))?;
+
+        for seed in &seeds {
+            let url = format!("{}/v1/gateways", seed.trim_end_matches('/'));
+            let resp = match http.get(&url).send().await {
+                Ok(r) if r.status().is_success() => r,
+                _ => continue,
+            };
+            let body: serde_json::Value = match resp.json().await {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let gateways = body["gateways"].as_array().cloned().unwrap_or_default();
+            // Sort HTTPS first.
+            let mut sorted = gateways;
+            sorted.sort_by_key(|g| {
+                if g["https"].as_bool() == Some(true) {
+                    0
+                } else {
+                    1
+                }
+            });
+            for gw in &sorted {
+                let is_https = gw["https"].as_bool() == Some(true);
+                if opts.require_https && !is_https {
+                    continue;
+                }
+                if let Some(gw_url) = gw["url"].as_str() {
+                    return Self::new(gw_url);
+                }
+            }
+        }
+        Err(SdkError::Http("no reachable gateway found".into()))
     }
 
     /// Non-streaming chat completion.
     pub async fn chat_completion(&self, req: ChatRequest) -> Result<ChatResponse> {
         let url = format!("{}/v1/chat/completions", self.base_url);
-        let resp = self
-            .http
-            .post(&url)
-            .json(&req)
+        let mut builder = self.http.post(&url).json(&req);
+        if let Some(key) = &self.api_key {
+            builder = builder.header("Authorization", format!("Bearer {key}"));
+        }
+        let resp = builder
             .send()
             .await
             .map_err(|e| SdkError::Http(e.to_string()))?;
@@ -79,9 +138,11 @@ impl Client {
     /// List models from the on-chain registry.
     pub async fn list_models(&self) -> Result<ModelsResponse> {
         let url = format!("{}/v1/models", self.base_url);
-        let resp = self
-            .http
-            .get(&url)
+        let mut builder = self.http.get(&url);
+        if let Some(key) = &self.api_key {
+            builder = builder.header("Authorization", format!("Bearer {key}"));
+        }
+        let resp = builder
             .send()
             .await
             .map_err(|e| SdkError::Http(e.to_string()))?;
@@ -99,6 +160,15 @@ impl Client {
 }
 
 // ─── Request / response types ───────────────────────────────────────
+
+/// Options for [`Client::connect`] auto-discovery.
+#[derive(Clone, Debug, Default)]
+pub struct ConnectOptions {
+    /// Seed URLs to discover gateways. Defaults to the arknet seed list.
+    pub seeds: Vec<String>,
+    /// Only connect to HTTPS gateways.
+    pub require_https: bool,
+}
 
 /// Chat completion request.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -119,6 +189,12 @@ pub struct ChatRequest {
     /// Stop sequences.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+    /// Route only to TEE-capable nodes (confidential inference).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefer_tee: Option<bool>,
+    /// Route only through HTTPS gateways.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_https: Option<bool>,
 }
 
 /// A chat message.
@@ -237,5 +313,55 @@ mod tests {
         let resp: ModelsResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.data.len(), 1);
         assert_eq!(resp.data[0].id, "llama-3-8b");
+    }
+
+    #[test]
+    fn api_key_from_env() {
+        std::env::set_var("ARKNET_WALLET", "ark1fromenv");
+        let c = Client::new("http://localhost:1234").unwrap();
+        assert_eq!(c.api_key.as_deref(), Some("ark1fromenv"));
+        std::env::remove_var("ARKNET_WALLET");
+    }
+
+    #[test]
+    fn prefer_tee_serialized_when_set() {
+        let req = ChatRequest {
+            model: "test".into(),
+            messages: vec![],
+            prefer_tee: Some(true),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"prefer_tee\":true"));
+    }
+
+    #[test]
+    fn prefer_tee_omitted_when_none() {
+        let req = ChatRequest {
+            model: "test".into(),
+            messages: vec![],
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("prefer_tee"));
+    }
+
+    #[test]
+    fn require_https_serialized_when_set() {
+        let req = ChatRequest {
+            model: "test".into(),
+            messages: vec![],
+            require_https: Some(true),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"require_https\":true"));
+    }
+
+    #[test]
+    fn connect_options_defaults() {
+        let opts = ConnectOptions::default();
+        assert!(opts.seeds.is_empty());
+        assert!(!opts.require_https);
     }
 }

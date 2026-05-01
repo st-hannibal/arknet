@@ -29,6 +29,7 @@ pub mod circuit_breaker;
 pub mod errors;
 pub mod escrow_entry;
 pub mod fee_market;
+pub mod gateway_entry;
 pub mod genesis;
 pub mod governance_entry;
 pub mod pending_reward;
@@ -52,6 +53,7 @@ pub use circuit_breaker::CircuitBreakerState;
 pub use errors::{ChainError, Result};
 pub use escrow_entry::{EscrowEntry, EscrowState, ESCROW_TIMEOUT_BLOCKS};
 pub use fee_market::{next_base_fee, BASE_FEE_MAX_CHANGE_DENOM, MIN_BASE_FEE};
+pub use gateway_entry::{GatewayEntry, HTTPS_MULTIPLIER_BPS, HTTP_MULTIPLIER_BPS};
 pub use genesis::{
     load_genesis, seed_genesis_models, GenesisConfig, GenesisModel, GenesisParams, GenesisValidator,
 };

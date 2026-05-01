@@ -202,6 +202,13 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
             operator,
             capability,
         } => apply_register_tee(ctx, node_id, operator, capability),
+        Transaction::RegisterGateway {
+            node_id,
+            operator,
+            url,
+            https,
+        } => apply_register_gateway(ctx, node_id, operator, url, *https, height),
+        Transaction::UnregisterGateway { node_id, .. } => apply_unregister_gateway(ctx, node_id),
     }
 }
 
@@ -303,6 +310,7 @@ fn apply_receipt_batch(
                 router_addr,
                 treasury_addr: treasury,
                 tee_multiplier_bps: tee_mult,
+                https_multiplier_bps: crate::gateway_entry::HTTP_MULTIPLIER_BPS,
             };
             let pr_bytes = borsh::to_vec(&pr)
                 .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
@@ -464,6 +472,7 @@ fn apply_escrow_settle(
         router_addr: *router_addr,
         treasury_addr: *treasury_addr,
         tee_multiplier_bps: crate::pending_reward::TEE_MULTIPLIER_NONE,
+        https_multiplier_bps: crate::gateway_entry::HTTP_MULTIPLIER_BPS,
     };
     let pr_bytes = borsh::to_vec(&pending)
         .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
@@ -643,6 +652,63 @@ fn apply_register_tee(
 
     Ok(TxOutcome::Applied {
         gas_used: REGISTER_TEE_GAS,
+    })
+}
+
+/// Gas for gateway registration.
+pub const REGISTER_GATEWAY_GAS: Gas = 100_000;
+/// Gas for gateway unregistration.
+pub const UNREGISTER_GATEWAY_GAS: Gas = 50_000;
+
+/// Register a node as a public gateway.
+fn apply_register_gateway(
+    ctx: &mut BlockCtx<'_>,
+    node_id: &arknet_common::types::NodeId,
+    operator: &Address,
+    url: &str,
+    https: bool,
+    height: Height,
+) -> Result<TxOutcome> {
+    if url.is_empty() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "empty gateway URL",
+        )));
+    }
+    if url.len() > crate::gateway_entry::MAX_GATEWAY_URL_LEN {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "gateway URL too long",
+        )));
+    }
+    if https && !url.starts_with("https://") {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "https flag set but URL does not start with https://",
+        )));
+    }
+
+    let entry = crate::gateway_entry::GatewayEntry {
+        node_id: *node_id,
+        operator: *operator,
+        url: url.to_string(),
+        https,
+        registered_at: height,
+    };
+    let bytes =
+        borsh::to_vec(&entry).map_err(|e| ChainError::Codec(format!("gateway encode: {e}")))?;
+    ctx.set_gateway(node_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REGISTER_GATEWAY_GAS,
+    })
+}
+
+/// Remove a node from the gateway registry.
+fn apply_unregister_gateway(
+    ctx: &mut BlockCtx<'_>,
+    node_id: &arknet_common::types::NodeId,
+) -> Result<TxOutcome> {
+    ctx.delete_gateway(node_id)?;
+    Ok(TxOutcome::Applied {
+        gas_used: UNREGISTER_GATEWAY_GAS,
     })
 }
 
@@ -1364,6 +1430,148 @@ mod tests {
             TxOutcome::Rejected(RejectReason::NotYetImplemented("TEE quote too short")) => {}
             other => panic!("expected too-short rejection, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn register_gateway_happy_path() {
+        let (_tmp, state) = tmp_state();
+        let node_id = arknet_common::types::NodeId::new([0xaa; 32]);
+        let operator = Address::new([0xbb; 20]);
+        let stx = sign(Transaction::RegisterGateway {
+            node_id,
+            operator,
+            url: "https://rpc.mynode.com".into(),
+            https: true,
+        });
+        let mut ctx = state.begin_block();
+        let outcome = apply_tx(&mut ctx, &stx).unwrap();
+        assert_eq!(
+            outcome,
+            TxOutcome::Applied {
+                gas_used: REGISTER_GATEWAY_GAS
+            }
+        );
+        ctx.commit().unwrap();
+
+        let gateways = state.iter_gateways().unwrap();
+        assert_eq!(gateways.len(), 1);
+        assert_eq!(gateways[0].url, "https://rpc.mynode.com");
+        assert!(gateways[0].https);
+    }
+
+    #[test]
+    fn register_gateway_rejects_empty_url() {
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterGateway {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            url: String::new(),
+            https: false,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented("empty gateway URL")) => {}
+            other => panic!("expected empty URL rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_gateway_rejects_https_mismatch() {
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterGateway {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            url: "http://not-https.com".into(),
+            https: true, // claims https but URL is http
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "https flag set but URL does not start with https://",
+            )) => {}
+            other => panic!("expected https mismatch rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unregister_gateway_removes_entry() {
+        let (_tmp, state) = tmp_state();
+        let node_id = arknet_common::types::NodeId::new([0xaa; 32]);
+        let operator = Address::new([0xbb; 20]);
+
+        // Register.
+        let stx1 = sign(Transaction::RegisterGateway {
+            node_id,
+            operator,
+            url: "https://rpc.mynode.com".into(),
+            https: true,
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx1).unwrap();
+        ctx.commit().unwrap();
+        assert_eq!(state.iter_gateways().unwrap().len(), 1);
+
+        // Unregister.
+        let stx2 = sign(Transaction::UnregisterGateway { node_id, operator });
+        let mut ctx = state.begin_block();
+        let outcome = apply_tx(&mut ctx, &stx2).unwrap();
+        assert_eq!(
+            outcome,
+            TxOutcome::Applied {
+                gas_used: UNREGISTER_GATEWAY_GAS
+            }
+        );
+        ctx.commit().unwrap();
+        assert_eq!(state.iter_gateways().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn gateway_discovery_end_to_end() {
+        let (_tmp, state) = tmp_state();
+
+        // Register 3 gateways: 2 HTTPS, 1 HTTP.
+        for (i, (url, https)) in [
+            ("https://gw1.example.com", true),
+            ("http://203.0.113.1:26657", false),
+            ("https://gw2.example.com", true),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut node_bytes = [0u8; 32];
+            node_bytes[0] = i as u8;
+            let stx = sign(Transaction::RegisterGateway {
+                node_id: arknet_common::types::NodeId::new(node_bytes),
+                operator: Address::new([i as u8; 20]),
+                url: url.to_string(),
+                https: *https,
+            });
+            let mut ctx = state.begin_block();
+            let _ = apply_tx(&mut ctx, &stx).unwrap();
+            ctx.commit().unwrap();
+        }
+
+        // All 3 registered.
+        let all = state.iter_gateways().unwrap();
+        assert_eq!(all.len(), 3);
+
+        // SDK would filter HTTPS-only: 2 gateways.
+        let https_only: Vec<_> = all.iter().filter(|g| g.https).collect();
+        assert_eq!(https_only.len(), 2);
+
+        // Unregister one.
+        let mut node_bytes = [0u8; 32];
+        node_bytes[0] = 0;
+        let stx = sign(Transaction::UnregisterGateway {
+            node_id: arknet_common::types::NodeId::new(node_bytes),
+            operator: Address::new([0; 20]),
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx).unwrap();
+        ctx.commit().unwrap();
+
+        // Down to 2.
+        assert_eq!(state.iter_gateways().unwrap().len(), 2);
     }
 
     #[test]
