@@ -741,13 +741,14 @@ async fn handle_effect(
                 }
             }
             tokio::time::sleep(cfg.timeouts.block_interval).await;
-            if !mempool.lock().is_empty() {
+            let single_validator = cfg.validator_set.count() <= 1;
+            if !mempool.lock().is_empty() || !single_validator {
                 *skip_block_waiting = false;
                 let next = Height(height.as_u64() + 1);
                 follow_ups.push(Input::StartHeight(next, cfg.validator_set.clone()));
             } else {
-                // Skip-block: defer StartHeight until a tx arrives or
-                // heartbeat fires. The main loop handles the wake-up.
+                // Skip-block (single-validator only): defer StartHeight
+                // until a tx arrives or heartbeat fires.
                 *skip_block_waiting = true;
                 *skip_block_deadline = Instant::now() + Duration::from_secs(60);
             }
