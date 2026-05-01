@@ -167,6 +167,71 @@ for chunk in resp:
 </ul>
 <p>Rewards are minted from the emission schedule. See <a href="/docs/tokenomics.html">Tokenomics</a> for details.</p>
 
+<h2>CLI Reference</h2>
+<p>Every operator action is a CLI command. No raw transaction hex needed.</p>
+
+<h3>Wallet &amp; transfers</h3>
+<pre># Create or show wallet
+arknet wallet create
+arknet wallet address
+arknet wallet balance
+
+# Send ARK
+arknet wallet send --to 0x... --amount 1000000000</pre>
+
+<h3>Staking</h3>
+<pre># Stake for a role (validator, router, compute, verifier)
+arknet wallet stake --role compute --amount 50000000000000
+
+# Begin unstaking (starts 14-day unbonding)
+arknet wallet unstake --role compute --amount 50000000000000
+
+# Finalize unbonding after 14 days
+arknet wallet complete-unbond --role compute --unbond-id 1
+
+# Move stake to a different node (1-day cooldown)
+arknet wallet redelegate --role compute --to-node 0x... --amount 50000000000000</pre>
+
+<h3>Gateway</h3>
+<pre># Register as a public gateway (HTTP)
+arknet gateway register --url http://YOUR_IP:26657
+
+# Register as an HTTPS gateway (1.2x reward multiplier)
+arknet gateway register --url https://rpc.mynode.com --https
+
+# Remove from gateway registry
+arknet gateway unregister</pre>
+
+<h3>Governance</h3>
+<pre># Submit a proposal (requires 10,000 ARK deposit)
+arknet governance propose --title "Add Llama 4 Scout" --body "Proposal details..."
+
+# Read body from a file
+arknet governance propose --title "Add Llama 4 Scout" --body @proposal.md
+
+# Vote on a proposal (yes, no, abstain, no-with-veto)
+arknet governance vote --proposal 1 --choice yes</pre>
+
+<div class="note">
+<p><strong>How governance works:</strong> Anyone with 10,000 ARK can submit a proposal. It enters a 7-day discussion phase, then a 7-day voting phase. Validators vote weighted by stake. Quorum = 33% of bonded stake. Threshold = 67% yes votes. If it passes, the action executes on-chain and the deposit is returned. If it fails, the deposit is burned.</p>
+<p>Common proposals: add new models, adjust fee parameters, spend treasury funds. Architecture changes require a code release — governance only controls on-chain state.</p>
+</div>
+
+<h3>TEE (confidential inference)</h3>
+<pre># Generate enclave keypair
+arknet tee keygen
+
+# Show enclave public key
+arknet tee pubkey
+
+# Register TEE capability on-chain
+arknet tee register --platform intel-tdx --quote-file attestation.bin</pre>
+
+<h3>All commands</h3>
+<pre>arknet --help                    # full command tree
+arknet &lt;command&gt; --help          # help for any command
+arknet governance --help         # or use the alias: arknet gov --help</pre>
+
 <h2>Next steps</h2>
 <ul>
   <li><a href="/docs/models.html">Browse genesis models</a> — pick what your hardware can serve</li>

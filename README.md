@@ -160,6 +160,35 @@ rpc_listen = "0.0.0.0:26657"       # expose to serve users
 
 This is the same model as every blockchain: Bitcoin exposes port 8333, Ethereum 30303, Cosmos 26656. The P2P port is the backbone; the RPC port is operator-optional.
 
+## CLI — every action is a command
+
+```bash
+# Wallet
+arknet wallet create                    # generate identity
+arknet wallet balance                   # check ARK balance
+arknet wallet send --to 0x... --amount 1000000000
+
+# Staking
+arknet wallet stake --role compute --amount 50000000000000
+arknet wallet unstake --role compute --amount 50000000000000
+arknet wallet complete-unbond --role compute --unbond-id 1
+arknet wallet redelegate --role compute --to-node 0x... --amount 50000000000000
+
+# Gateway
+arknet gateway register --url https://rpc.mynode.com --https
+arknet gateway unregister
+
+# Governance
+arknet governance propose --title "Add Llama 4" --body @proposal.md
+arknet governance vote --proposal 1 --choice yes
+
+# TEE
+arknet tee keygen
+arknet tee register --platform intel-tdx --quote-file quote.bin
+```
+
+No raw transaction hex. Every on-chain action has a CLI command. Run `arknet --help` for the full tree.
+
 ## Why arknet?
 
 | | Centralized (OpenAI, etc.) | arknet |
