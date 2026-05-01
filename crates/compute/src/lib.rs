@@ -42,5 +42,5 @@ pub use free_tier::{
 pub use job::{ComputeJobRunner, JOB_EVENT_BUFFER, NONCE_CACHE_CAP};
 pub use wire::{
     derive_user_address, InferenceJobEvent, InferenceJobRequest, InferenceRequestSigningBody,
-    StopKind, INFERENCE_REQUEST_DOMAIN, REQUEST_MAX_SKEW_MS,
+    PoolOffer, StopKind, INFERENCE_REQUEST_DOMAIN, REQUEST_MAX_SKEW_MS,
 };

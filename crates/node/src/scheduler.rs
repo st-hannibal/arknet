@@ -11,6 +11,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use arknet_network::InboundInferenceRequest;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -56,15 +58,16 @@ impl FromStr for Role {
 /// Week 7-8 adds `Validator`; the consensus engine is booted by
 /// `cli::start` and the role body here just waits for shutdown (the
 /// engine's own tokio task already owns the loop).
-pub async fn run(role: Role, rt: NodeRuntime, shutdown: CancellationToken) -> Result<()> {
+pub async fn run(
+    role: Role,
+    rt: NodeRuntime,
+    inference_requests: Option<mpsc::Receiver<InboundInferenceRequest>>,
+    shutdown: CancellationToken,
+) -> Result<()> {
     match role {
         Role::Compute => {
-            // Compute role gets a real body once a runner is attached.
-            // If none, fall back to the Phase-0 idle compute loop so
-            // the node still starts (compute scheduling without the
-            // L2 router stack is still useful for local CLI driving).
             if rt.compute.is_some() {
-                crate::compute_role::run(rt, shutdown).await
+                crate::compute_role::run(rt, inference_requests, shutdown).await
             } else {
                 run_compute(rt, shutdown).await
             }
@@ -173,7 +176,7 @@ mod tests {
             .unwrap();
         let shutdown = CancellationToken::new();
 
-        let err = run(Role::Verifier, rt, shutdown).await.unwrap_err();
+        let err = run(Role::Verifier, rt, None, shutdown).await.unwrap_err();
         assert!(matches!(err, NodeError::Config(_)));
     }
 
@@ -185,7 +188,7 @@ mod tests {
             .await
             .unwrap();
         let shutdown = CancellationToken::new();
-        let err = run(Role::Router, rt, shutdown).await.unwrap_err();
+        let err = run(Role::Router, rt, None, shutdown).await.unwrap_err();
         assert!(matches!(err, NodeError::Config(_)));
     }
 
@@ -197,7 +200,7 @@ mod tests {
             .await
             .unwrap();
         let shutdown = CancellationToken::new();
-        let err = run(Role::Validator, rt, shutdown).await.unwrap_err();
+        let err = run(Role::Validator, rt, None, shutdown).await.unwrap_err();
         assert!(matches!(err, NodeError::Config(_)));
     }
 

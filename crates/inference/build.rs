@@ -100,6 +100,7 @@ fn build_llama_cpp(vendor: &Path, backend: GpuBackend) -> PathBuf {
         .define("LLAMA_CURL", "OFF")
         .define("GGML_BUILD_TESTS", "OFF")
         .define("GGML_OPENMP", "OFF")
+        .define("GGML_NATIVE", "OFF")
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         .profile("Release");
 

@@ -55,7 +55,8 @@ async fn boot_node(
     let info = handshake("arknet-devnet-test");
     let cancel = CancellationToken::new();
 
-    let (handle, join) = Network::start(cfg, kp, info, cancel.clone()).await.unwrap();
+    let (handle, _inference_channels, join) =
+        Network::start(cfg, kp, info, cancel.clone()).await.unwrap();
 
     // Give the node a moment to bind its listener and report its address.
     // We subscribe before that so we don't race past `NewListenAddr`.
@@ -92,7 +93,7 @@ async fn two_node_gossip_roundtrip() {
     let kp_a = Keypair::generate_ed25519();
     let cfg_a = config(listen_a.clone(), tmp.path().join("peers-a.json"), vec![]);
     let cancel_a = CancellationToken::new();
-    let (handle_a, join_a) = Network::start(
+    let (handle_a, _infer_a, join_a) = Network::start(
         cfg_a,
         kp_a.clone(),
         handshake("arknet-devnet-test"),
@@ -122,7 +123,7 @@ async fn two_node_gossip_roundtrip() {
         vec![addr_a_for_b],
     );
     let cancel_b = CancellationToken::new();
-    let (handle_b, join_b) = Network::start(
+    let (handle_b, _infer_b, join_b) = Network::start(
         cfg_b,
         kp_b,
         handshake("arknet-devnet-test"),
@@ -217,7 +218,7 @@ async fn wrong_network_id_is_rejected() {
         max_outbound_peers: 20,
     };
     let cancel_a = CancellationToken::new();
-    let (handle_a, join_a) = Network::start(
+    let (handle_a, _infer_a, join_a) = Network::start(
         cfg_a,
         kp_a.clone(),
         HandshakeInfo {
@@ -253,7 +254,7 @@ async fn wrong_network_id_is_rejected() {
         max_outbound_peers: 20,
     };
     let cancel_b = CancellationToken::new();
-    let (handle_b, join_b) = Network::start(
+    let (handle_b, _infer_b, join_b) = Network::start(
         cfg_b,
         kp_b,
         HandshakeInfo {

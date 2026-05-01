@@ -208,6 +208,26 @@ impl InferenceJobRequest {
     }
 }
 
+/// Gossip message for `arknet/pool/offer/1`. A compute node publishes
+/// this when it loads or unloads a model so routers can update their
+/// candidate registries.
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub struct PoolOffer {
+    /// libp2p PeerId as bytes — routers map this to a PeerId for p2p
+    /// request-response dispatch.
+    pub peer_id: Vec<u8>,
+    /// Canonical model refs this compute node currently serves.
+    pub model_refs: Vec<String>,
+    /// Operator address.
+    pub operator: Address,
+    /// Staked amount (for ranking).
+    pub total_stake: u128,
+    /// TEE capability flag.
+    pub supports_tee: bool,
+    /// Unix millis — routers use freshness to expire stale offers.
+    pub timestamp_ms: Timestamp,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,19 +7,20 @@
 //! a [`crate::l2_dispatch::LocalComputeDispatcher`] into the router's
 //! candidate registry so jobs flow end-to-end in-process.
 
-// Helpers in this module are exercised by node-level integration
-// tests only; mark them `allow(dead_code)` so clippy doesn't reject
-// the currently thin boot path. Week 11 wires these into the
-// multi-role boot sequence when verifier + L2 mesh land.
 #![allow(dead_code)]
 
 use std::sync::Arc;
 
 use arknet_common::types::{Address, NodeId, PoolId};
+use arknet_compute::wire::{InferenceJobRequest, PoolOffer};
 use arknet_compute::ComputeJobRunner;
+use arknet_model_manager::ModelRef;
+use arknet_network::{InboundInferenceRequest, InferenceResponse, NetworkHandle};
 use arknet_router::candidate::Candidate;
+use futures::StreamExt;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info, warn};
 
 use crate::errors::Result;
 use crate::l2_dispatch::LocalComputeDispatcher;
@@ -90,15 +91,149 @@ pub fn register_self_as_candidate(
     router.registry().upsert(candidate);
 }
 
-/// Drive the compute role until shutdown.
-pub async fn run(rt: NodeRuntime, shutdown: CancellationToken) -> Result<()> {
-    let Some(_runner) = rt.compute.clone() else {
+/// Drive the compute role until shutdown. If `inference_requests` is
+/// provided, the compute node handles incoming p2p inference requests
+/// from remote routers.
+pub async fn run(
+    rt: NodeRuntime,
+    mut inference_requests: Option<mpsc::Receiver<InboundInferenceRequest>>,
+    shutdown: CancellationToken,
+) -> Result<()> {
+    let Some(runner) = rt.compute.clone() else {
         return Err(crate::errors::NodeError::Config(
             "compute role requires a ComputeJobRunner — not attached at boot".into(),
         ));
     };
     info!("compute role online — awaiting shutdown");
-    shutdown.cancelled().await;
-    info!("compute role shutting down cleanly");
-    Ok(())
+
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                info!("compute role shutting down cleanly");
+                return Ok(());
+            }
+            Some(inbound) = async {
+                match inference_requests.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let network = rt.network.clone();
+                let runner = runner.clone();
+                let inference = rt.inference.clone();
+                tokio::spawn(async move {
+                    handle_inference_request(inbound, runner, inference, network).await;
+                });
+            }
+        }
+    }
+}
+
+/// Handle a single inbound inference request from a remote router.
+async fn handle_inference_request(
+    inbound: InboundInferenceRequest,
+    runner: ComputeJobRunner,
+    _inference: arknet_inference::InferenceEngine,
+    network: Option<NetworkHandle>,
+) {
+    let Some(net) = network else {
+        warn!("received inference request but network handle is not available");
+        return;
+    };
+
+    let req: InferenceJobRequest = match borsh::from_slice(&inbound.data) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(error = %e, "failed to decode inference request");
+            return;
+        }
+    };
+
+    let model_ref = match ModelRef::parse(&req.model_ref) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(error = %e, model = %req.model_ref, "bad model ref in inference request");
+            return;
+        }
+    };
+
+    let pool_id = local_pool_id();
+    let now = arknet_router::failover::now_ms();
+    let job_id = {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"arknet-job-id-v1");
+        hasher.update(&req.derived_user_address().0);
+        hasher.update(&req.nonce.to_le_bytes());
+        hasher.update(&now.to_le_bytes());
+        let digest = hasher.finalize();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(digest.as_bytes());
+        arknet_common::types::JobId::new(out)
+    };
+
+    let stream = match runner.run(req, &model_ref, pool_id, job_id, now).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(error = %e, "compute job failed");
+            return;
+        }
+    };
+
+    let mut pinned = std::pin::pin!(stream);
+    let mut encoded_events = Vec::new();
+    while let Some(event) = pinned.next().await {
+        match borsh::to_vec(&event) {
+            Ok(bytes) => encoded_events.push(bytes),
+            Err(e) => {
+                error!(error = %e, "failed to encode inference event");
+                return;
+            }
+        }
+    }
+
+    let response = InferenceResponse::new(encoded_events);
+    let wire_resp = match borsh::to_vec(&response) {
+        Ok(b) => b,
+        Err(e) => {
+            error!(error = %e, "failed to encode inference response");
+            return;
+        }
+    };
+
+    if let Err(e) = net
+        .send_inference_response(inbound.request_id, wire_resp)
+        .await
+    {
+        warn!(error = %e, "failed to send inference response");
+    }
+}
+
+/// Publish a `PoolOffer` on gossip so routers discover this compute node.
+pub async fn announce_models(
+    network: &NetworkHandle,
+    model_refs: Vec<String>,
+    operator: Address,
+    supports_tee: bool,
+) {
+    let offer = PoolOffer {
+        peer_id: network.local_peer_id().to_bytes(),
+        model_refs,
+        operator,
+        total_stake: 1_000_000,
+        supports_tee,
+        timestamp_ms: arknet_router::failover::now_ms(),
+    };
+    let data = match borsh::to_vec(&offer) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!(error = %e, "failed to encode pool offer");
+            return;
+        }
+    };
+    let topic = arknet_network::gossip::pool_offer().to_string();
+    if let Err(e) = network.publish(topic, data).await {
+        warn!(error = %e, "failed to publish pool offer");
+    } else {
+        info!(models = ?offer.model_refs, "published pool offer");
+    }
 }

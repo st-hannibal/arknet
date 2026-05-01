@@ -188,12 +188,7 @@ struct LoadRequest {
     url: String,
     sha256: String,
     size_bytes: u64,
-    #[serde(default = "default_quant")]
-    quant: String,
-}
-
-fn default_quant() -> String {
-    "F32".into()
+    quant: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -220,7 +215,7 @@ async fn do_load(state: &RpcState, req: LoadRequest) -> Result<LoadResponse> {
         &req.url,
         &req.sha256,
         req.size_bytes,
-        &req.quant,
+        req.quant.as_deref(),
     )?;
     state.register_manifest(&model_ref, manifest.clone());
 
@@ -269,10 +264,21 @@ async fn chat_completions(
         (status, Json(serde_json::to_value(body.0).unwrap()))
     })?;
 
+    // Try routing through the Router if one is attached and has
+    // candidates for this model (remote compute nodes).
+    if let Some(router) = state.runtime.router.as_ref() {
+        let now = arknet_router::failover::now_ms();
+        let candidates = router.registry().eligible_for(&model_ref.to_string(), now);
+        if !candidates.is_empty() {
+            return route_via_router(router, &req, &model_ref).await;
+        }
+    }
+
+    // Local fallback: load model on this node and run inference.
     let manifest = state.manifest_for(&model_ref).ok_or_else(|| {
         let (status, body) = error_response(
             StatusCode::NOT_FOUND,
-            format!("model not loaded: {model_ref}. POST /v1/models/load first."),
+            format!("model not loaded: {model_ref}. No remote compute nodes available either.",),
             "model_not_found",
         );
         (status, Json(serde_json::to_value(body.0).unwrap()))
@@ -576,12 +582,16 @@ fn build_manifest(
     url: &str,
     sha256_hex: &str,
     size: u64,
-    quant_str: &str,
+    quant_override: Option<&str>,
 ) -> Result<ModelManifest> {
     let url = Url::parse(url).map_err(|e| NodeError::ModelRef(format!("bad url: {e}")))?;
     let digest = parse_digest(sha256_hex)?;
-    let quant = GgufQuant::parse(quant_str)
-        .ok_or_else(|| NodeError::ModelRef(format!("unknown quant: {quant_str}")))?;
+    let quant = match quant_override {
+        Some(s) => {
+            GgufQuant::parse(s).ok_or_else(|| NodeError::ModelRef(format!("unknown quant: {s}")))?
+        }
+        None => model_ref.quant,
+    };
     Ok(ModelManifest {
         id: ModelId([0u8; 32]),
         model_ref: model_ref.clone(),
@@ -612,6 +622,120 @@ fn parse_digest(hex_s: &str) -> Result<Sha256Digest> {
 #[derive(Serialize)]
 struct ErrorBody {
     error: String,
+}
+
+/// Route an inference request through the Router to a remote compute node.
+async fn route_via_router(
+    router: &arknet_router::Router,
+    req: &arknet_rpc::openai::ChatCompletionRequest,
+    model_ref: &ModelRef,
+) -> std::result::Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
+    use arknet_compute::wire::{InferenceJobEvent, InferenceJobRequest};
+    use arknet_rpc::openai::*;
+
+    let prompt = req
+        .messages
+        .iter()
+        .map(|m| format!("{}: {}", m.role, m.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let job_req = InferenceJobRequest {
+        model_ref: model_ref.to_string(),
+        model_hash: [0u8; 32],
+        prompt,
+        max_tokens: req.max_tokens,
+        seed: 0,
+        deterministic: false,
+        stop_strings: req
+            .stop
+            .as_ref()
+            .map(|s| s.clone().into_vec())
+            .unwrap_or_default(),
+        nonce: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0),
+        timestamp_ms: arknet_router::failover::now_ms(),
+        user_pubkey: arknet_common::types::PubKey::ed25519([0u8; 32]),
+        signature: arknet_common::types::Signature::ed25519([0u8; 64]),
+        prefer_tee: req.prefer_tee,
+        encrypted_prompt: None,
+    };
+
+    let (_job_id, mut stream) = router
+        .accept(
+            job_req,
+            arknet_router::failover::now_ms(),
+            arknet_router::intake::QuotaPolicy::Skip,
+        )
+        .await
+        .map_err(|e| {
+            let (status, body) = error_response(
+                StatusCode::BAD_GATEWAY,
+                format!("router dispatch failed: {e}"),
+                "routing_error",
+            );
+            (status, Json(serde_json::to_value(body.0).unwrap()))
+        })?;
+
+    let mut tokens = Vec::new();
+    let mut finish_reason = "length".to_string();
+    while let Some(event) = stream.next().await {
+        match event {
+            InferenceJobEvent::Token { text, .. } => tokens.push(text),
+            InferenceJobEvent::Stop { reason, .. } => {
+                finish_reason = match reason {
+                    arknet_compute::wire::StopKind::MaxTokens => "length",
+                    arknet_compute::wire::StopKind::EndOfStream => "stop",
+                    arknet_compute::wire::StopKind::StopString(_) => "stop",
+                    arknet_compute::wire::StopKind::Cancelled => "length",
+                }
+                .into();
+                break;
+            }
+            InferenceJobEvent::Error { message, .. } => {
+                let (status, body) = error_response(
+                    StatusCode::BAD_GATEWAY,
+                    format!("compute error: {message}"),
+                    "compute_error",
+                );
+                return Err((status, Json(serde_json::to_value(body.0).unwrap())));
+            }
+        }
+    }
+
+    let content = tokens.join("");
+    let total_tokens = tokens.len() as u32;
+    let resp = ChatCompletionResponse {
+        id: format!(
+            "chatcmpl-{:016x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0)
+        ),
+        object: "chat.completion",
+        created: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        model: model_ref.to_string(),
+        choices: vec![Choice {
+            index: 0,
+            message: ChatMessage {
+                role: "assistant".into(),
+                content,
+            },
+            finish_reason: Some(finish_reason),
+        }],
+        usage: Usage {
+            prompt_tokens: 0,
+            completion_tokens: total_tokens,
+            total_tokens,
+        },
+    };
+    Ok(Json(resp).into_response())
 }
 
 fn http_error(e: NodeError) -> (StatusCode, Json<ErrorBody>) {

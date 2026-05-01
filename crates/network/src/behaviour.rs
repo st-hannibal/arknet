@@ -22,6 +22,8 @@ use libp2p::{
     swarm::NetworkBehaviour, StreamProtocol,
 };
 
+use crate::inference_proto;
+
 use crate::errors::NetworkError;
 use crate::handshake::HandshakeInfo;
 
@@ -41,6 +43,8 @@ pub struct ArknetBehaviour {
     pub identify: identify::Behaviour,
     /// Ping — periodic keepalive + RTT sample.
     pub ping: ping::Behaviour,
+    /// Request-response for inference job forwarding between router and compute.
+    pub inference: inference_proto::InferenceBehaviour,
 }
 
 /// libp2p protocol identifier for our kademlia instance. Must match on
@@ -93,11 +97,14 @@ impl ArknetBehaviour {
                 .with_timeout(Duration::from_secs(20)),
         );
 
+        let inference = inference_proto::build_inference_behaviour();
+
         Ok(Self {
             gossipsub,
             kad,
             identify,
             ping,
+            inference,
         })
     }
 }

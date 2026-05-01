@@ -125,9 +125,10 @@ async fn boot_network(
         software: "arknet/test".into(),
         roles: Default::default(),
     };
-    Network::start(cfg, libp2p_kp, info, shutdown)
+    let (handle, _inference_channels, join) = Network::start(cfg, libp2p_kp, info, shutdown)
         .await
-        .expect("network boot")
+        .expect("network boot");
+    (handle, join)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

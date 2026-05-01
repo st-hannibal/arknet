@@ -13,10 +13,12 @@
 //! [`NetworkHandle`] is the sole interaction surface and is cheap to
 //! clone — internally it's a pair of mpsc senders.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use futures::StreamExt;
 use libp2p::identity::Keypair;
+use libp2p::request_response;
 use libp2p::swarm::{DialError, SwarmEvent};
 use libp2p::{gossipsub, identify, Multiaddr, PeerId, Swarm, SwarmBuilder};
 use tokio::sync::mpsc;
@@ -61,6 +63,27 @@ pub enum NetworkEvent {
     },
 }
 
+/// Inbound inference request delivered via a dedicated channel.
+pub struct InboundInferenceRequest {
+    /// Peer that sent the request.
+    pub peer: PeerId,
+    /// Borsh-encoded `InferenceJobRequest`.
+    pub data: Vec<u8>,
+    /// Opaque id to pass back when sending the response.
+    pub request_id: request_response::InboundRequestId,
+}
+
+/// Response to an outbound inference request.
+#[derive(Debug, Clone)]
+pub struct InferenceResponseEvent {
+    /// Original request id returned by `send_inference_request`.
+    pub request_id: request_response::OutboundRequestId,
+    /// Peer that responded.
+    pub peer: PeerId,
+    /// Borsh-encoded `InferenceResponse`, or error message on failure.
+    pub result: std::result::Result<Vec<u8>, String>,
+}
+
 /// Commands sent into the network task from outside.
 #[derive(Debug)]
 enum Command {
@@ -76,6 +99,15 @@ enum Command {
         addr: Multiaddr,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
+    SendInferenceRequest {
+        peer: PeerId,
+        data: Vec<u8>,
+        reply: tokio::sync::oneshot::Sender<request_response::OutboundRequestId>,
+    },
+    SendInferenceResponse {
+        request_id: request_response::InboundRequestId,
+        data: Vec<u8>,
+    },
 }
 
 /// Cheap-to-clone handle exposing the network surface.
@@ -87,6 +119,16 @@ pub struct NetworkHandle {
     commands: mpsc::Sender<Command>,
     events: tokio::sync::broadcast::Sender<NetworkEvent>,
     local_peer_id: PeerId,
+}
+
+/// Channels for inference request/response routing, returned alongside
+/// the `NetworkHandle` from [`Network::start`]. Not cloneable — the
+/// consumer (compute/router role) takes ownership.
+pub struct InferenceChannels {
+    /// Inbound inference requests from remote peers (compute consumes).
+    pub requests: mpsc::Receiver<InboundInferenceRequest>,
+    /// Responses to outbound inference requests (router consumes).
+    pub responses: mpsc::Receiver<InferenceResponseEvent>,
 }
 
 impl NetworkHandle {
@@ -141,6 +183,39 @@ impl NetworkHandle {
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<NetworkEvent> {
         self.events.subscribe()
     }
+
+    /// Send an inference request to a remote peer. Returns the outbound
+    /// request id; the response arrives as a `NetworkEvent::InferenceResponse`.
+    pub async fn send_inference_request(
+        &self,
+        peer: PeerId,
+        data: Vec<u8>,
+    ) -> Result<request_response::OutboundRequestId> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.commands
+            .send(Command::SendInferenceRequest {
+                peer,
+                data,
+                reply: tx,
+            })
+            .await
+            .map_err(|e| NetworkError::TaskExited(format!("send InferenceRequest: {e}")))?;
+        rx.await
+            .map_err(|e| NetworkError::TaskExited(format!("recv InferenceRequest reply: {e}")))
+    }
+
+    /// Send a response to an inbound inference request.
+    pub async fn send_inference_response(
+        &self,
+        request_id: request_response::InboundRequestId,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        self.commands
+            .send(Command::SendInferenceResponse { request_id, data })
+            .await
+            .map_err(|e| NetworkError::TaskExited(format!("send InferenceResponse: {e}")))?;
+        Ok(())
+    }
 }
 
 /// Owned network layer. Call [`Network::start`] once at node boot; pass
@@ -157,7 +232,7 @@ impl Network {
         keypair: Keypair,
         handshake: HandshakeInfo,
         shutdown: CancellationToken,
-    ) -> Result<(NetworkHandle, JoinHandle<Result<()>>)> {
+    ) -> Result<(NetworkHandle, InferenceChannels, JoinHandle<Result<()>>)> {
         config.validate()?;
 
         let local_peer_id = keypair.public().to_peer_id();
@@ -230,6 +305,8 @@ impl Network {
 
         let (command_tx, command_rx) = mpsc::channel(64);
         let (event_tx, _) = tokio::sync::broadcast::channel(256);
+        let (infer_req_tx, infer_req_rx) = mpsc::channel(64);
+        let (infer_resp_tx, infer_resp_rx) = mpsc::channel(64);
 
         let handle = NetworkHandle {
             commands: command_tx,
@@ -237,23 +314,43 @@ impl Network {
             local_peer_id,
         };
 
+        let inference_channels = InferenceChannels {
+            requests: infer_req_rx,
+            responses: infer_resp_rx,
+        };
+
         let expected = handshake.clone();
         let join = tokio::spawn(run_swarm(
-            swarm, command_rx, event_tx, peer_book, expected, shutdown,
+            swarm,
+            command_rx,
+            event_tx,
+            infer_req_tx,
+            infer_resp_tx,
+            peer_book,
+            expected,
+            shutdown,
         ));
 
-        Ok((handle, join))
+        Ok((handle, inference_channels, join))
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_swarm(
     mut swarm: Swarm<ArknetBehaviour>,
     mut commands: mpsc::Receiver<Command>,
     events: tokio::sync::broadcast::Sender<NetworkEvent>,
+    infer_req_tx: mpsc::Sender<InboundInferenceRequest>,
+    infer_resp_tx: mpsc::Sender<InferenceResponseEvent>,
     peer_book: PeerBook,
     expected_handshake: HandshakeInfo,
     shutdown: CancellationToken,
 ) -> Result<()> {
+    let mut infer = InferenceState {
+        req_tx: infer_req_tx,
+        resp_tx: infer_resp_tx,
+        pending_channels: HashMap::new(),
+    };
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
@@ -263,17 +360,17 @@ async fn run_swarm(
             }
 
             Some(cmd) = commands.recv() => {
-                handle_command(&mut swarm, cmd);
+                handle_command(&mut swarm, &mut infer, cmd);
             }
 
             Some(event) = swarm.next() => {
-                handle_swarm_event(event, &mut swarm, &events, &peer_book, &expected_handshake);
+                handle_swarm_event(event, &mut swarm, &events, &peer_book, &expected_handshake, &mut infer);
             }
         }
     }
 }
 
-fn handle_command(swarm: &mut Swarm<ArknetBehaviour>, cmd: Command) {
+fn handle_command(swarm: &mut Swarm<ArknetBehaviour>, infer: &mut InferenceState, cmd: Command) {
     match cmd {
         Command::Publish { topic, data, reply } => {
             let topic_hash = gossipsub::IdentTopic::new(topic.clone());
@@ -295,7 +392,25 @@ fn handle_command(swarm: &mut Swarm<ArknetBehaviour>, cmd: Command) {
                 .map_err(|e| NetworkError::Transport(format!("dial {addr}: {e}")));
             let _ = reply.send(res);
         }
+        Command::SendInferenceRequest { peer, data, reply } => {
+            let id = swarm.behaviour_mut().inference.send_request(&peer, data);
+            let _ = reply.send(id);
+        }
+        Command::SendInferenceResponse { request_id, data } => {
+            if let Some(channel) = infer.pending_channels.remove(&request_id) {
+                let _ = swarm.behaviour_mut().inference.send_response(channel, data);
+            } else {
+                warn!(?request_id, "no pending channel for inference response");
+            }
+        }
     }
+}
+
+struct InferenceState {
+    req_tx: mpsc::Sender<InboundInferenceRequest>,
+    resp_tx: mpsc::Sender<InferenceResponseEvent>,
+    pending_channels:
+        HashMap<request_response::InboundRequestId, request_response::ResponseChannel<Vec<u8>>>,
 }
 
 fn handle_swarm_event(
@@ -304,6 +419,7 @@ fn handle_swarm_event(
     events: &tokio::sync::broadcast::Sender<NetworkEvent>,
     peer_book: &PeerBook,
     expected: &HandshakeInfo,
+    infer: &mut InferenceState,
 ) {
     match event {
         SwarmEvent::NewListenAddr { address, .. } => {
@@ -374,8 +490,49 @@ fn handle_swarm_event(
                 source: propagation_source,
             });
         }
+        SwarmEvent::Behaviour(ArknetBehaviourEvent::Inference(
+            request_response::Event::Message { peer, message },
+        )) => match message {
+            request_response::Message::Request {
+                request_id,
+                request: data,
+                channel,
+            } => {
+                infer.pending_channels.insert(request_id, channel);
+                let _ = infer.req_tx.try_send(InboundInferenceRequest {
+                    peer,
+                    data,
+                    request_id,
+                });
+            }
+            request_response::Message::Response {
+                request_id,
+                response: data,
+            } => {
+                let _ = infer.resp_tx.try_send(InferenceResponseEvent {
+                    request_id,
+                    peer,
+                    result: Ok(data),
+                });
+            }
+        },
+        SwarmEvent::Behaviour(ArknetBehaviourEvent::Inference(
+            request_response::Event::OutboundFailure {
+                peer,
+                request_id,
+                error,
+                ..
+            },
+        )) => {
+            warn!(%peer, %error, "inference request failed");
+            let _ = infer.resp_tx.try_send(InferenceResponseEvent {
+                request_id,
+                peer,
+                result: Err(error.to_string()),
+            });
+        }
         SwarmEvent::Behaviour(_) => {
-            // Ping, kademlia bookkeeping, identify-sent: not surfaced.
+            // Ping, kademlia bookkeeping, identify-sent, inference inbound failure: not surfaced.
         }
         other => {
             debug!(event = ?other, "unhandled swarm event");
