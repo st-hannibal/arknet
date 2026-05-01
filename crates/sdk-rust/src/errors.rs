@@ -16,6 +16,21 @@ pub enum SdkError {
         /// Response body.
         body: String,
     },
+    /// Wallet I/O error (load/save).
+    #[error("wallet: {0}")]
+    Wallet(String),
+    /// Cryptographic operation failed.
+    #[error("crypto: {0}")]
+    Crypto(String),
+    /// P2P transport or protocol error.
+    #[error("p2p: {0}")]
+    P2p(String),
+    /// Wire encoding/decoding error.
+    #[error("wire: {0}")]
+    Wire(String),
+    /// No wallet configured where one is required.
+    #[error("no wallet: operation requires a wallet but none was provided")]
+    NoWallet,
 }
 
 /// SDK result type.

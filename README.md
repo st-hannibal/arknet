@@ -15,21 +15,24 @@
 
 Anyone with a computer earns **ARK** for serving AI models. Any developer queries AI through a familiar API — install the SDK, connect, done.
 
-**Use the network** (3 lines — the SDK finds nodes automatically):
+**Use the network** (4 lines):
 ```bash
 pip install arknet-sdk
 ```
 ```python
-from arknet_sdk import Client
+from arknet_sdk import Wallet, Client
 
-client = Client.connect()    # discovers nodes from the on-chain registry
+wallet = Wallet.create()        # your identity on the network
+wallet.save()                   # saves to ~/.arknet/wallet.key
+
+client = Client.connect(wallet=wallet)    # discovers nodes automatically
 response = client.chat_completion(
-    model="meta-llama/Llama-3.1-8B-Instruct",
+    model="Qwen/Qwen3-0.6B-Q4_K_M",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )
 ```
 
-No URLs to configure, no gateway to find — the SDK reads the blockchain's gateway registry and connects to the best available node. HTTPS preferred, TEE-capable nodes prioritized when you ask for confidential inference.
+Your wallet address is your API key. The SDK discovers compute nodes from the blockchain, connects directly via encrypted p2p, and sends your signed request. No gateway sees your prompts — you talk directly to the compute node.
 
 **Run locally** (free, offline, your hardware):
 ```python
@@ -37,7 +40,7 @@ from arknet_sdk import Client
 
 client = Client("http://localhost:26657")    # your own node
 response = client.chat_completion(
-    model="meta-llama/Llama-3.1-8B-Instruct",
+    model="Qwen/Qwen3-0.6B-Q4_K_M",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )
 ```
@@ -61,43 +64,46 @@ response = client.chat.completions.create(
 ## How it works
 
 ```
-┌──────────┐         ┌──────────┐         ┌──────────┐
-│  User /  │ ──────► │  Router  │ ──────► │ Compute  │
-│  dApp    │  HTTP   │  (picks  │  libp2p │  (runs   │
-│          │ ◄────── │   best   │ ◄────── │  model)  │
-│          │  tokens │   node)  │  tokens │          │
-└──────────┘         └──────────┘         └──────────┘
-                           │                    │
-                     ┌─────┴─────┐        ┌─────┴─────┐
+┌──────────┐  discover  ┌──────────┐  gossip   ┌──────────┐
+│  User /  │ ─────────► │ Gateway  │ ◄──────── │ Compute  │
+│  SDK     │            │ (who has │  "I have  │  (runs   │
+│          │            │  model?) │  model X" │  model)  │
+│          │ ◄────────────────────────────────► │          │
+│          │     direct p2p (Noise-encrypted)   │          │
+└──────────┘                                    └──────────┘
+                     ┌───────────┐        ┌───────────┐
                      │ Validator │        │ Verifier  │
                      │ (commits  │        │ (checks   │
                      │  blocks)  │        │  output)  │
                      └───────────┘        └───────────┘
 ```
 
-1. **User** sends an inference request to any **gateway** (a router node with public RPC).
-2. **Router** selects the best compute node (by model, latency, stake) and dispatches.
-3. **Compute node** runs the model, streams tokens back to the user.
+1. **Compute nodes** gossip their loaded models to the network.
+2. **User SDK** asks any gateway "who has model X?" and gets compute node addresses.
+3. **SDK connects directly** to the compute node over encrypted p2p — the gateway never sees the prompt or response.
 4. **Verifier** re-executes 5% of jobs deterministically — cheaters get slashed.
 5. **Validator** finalizes the receipt on L1, emission mints ARK.
 
-Users never interact with the blockchain directly — the OpenAI API is the interface. ARK flows behind the scenes through escrow and settlement.
+The gateway is a discovery service, not a relay. Your data flows directly between you and the compute node.
 
 ## Two ways to use arknet
 
 ### As a user/developer (no node required)
 
-Install the SDK and connect. The network handles node discovery, routing, payment, and verification — you never need to know any server URLs. During the bootstrap period (first 6 months), inference is **free**.
+Install the SDK, create a wallet, connect. The network handles node discovery, direct p2p routing, and verification. During the bootstrap period (first 6 months), inference is **free** (10 jobs/hour, 100 jobs/day per wallet).
 
 ```bash
 pip install arknet-sdk    # or: npm install arknet-sdk / cargo add arknet-sdk
 ```
 ```python
-from arknet_sdk import Client
+from arknet_sdk import Wallet, Client
 
-client = Client.connect()    # auto-discovers nodes from the blockchain
+wallet = Wallet.create()     # generate your wallet (one-time)
+wallet.save()                # persists to ~/.arknet/wallet.key
+
+client = Client.connect(wallet=wallet)
 response = client.chat_completion(
-    model="meta-llama/Llama-3.1-8B-Instruct",
+    model="Qwen/Qwen3-0.6B-Q4_K_M",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )
 ```
@@ -127,25 +133,31 @@ Every node exposes **one public port** (P2P) and keeps everything else private:
 
 ### How SDK discovery works
 
-SDKs find nodes in two steps:
+SDKs find compute nodes in three steps:
 
 1. Fetch `https://arknet.arkengel.com/seeds.json` — a static file listing known gateways
 2. Call `/v1/gateways` on a seed to get the full on-chain gateway list
+3. Call `/v1/candidates/<model>` on a gateway to get compute node p2p addresses
+4. Connect directly to the compute node over libp2p (Noise-encrypted QUIC)
 
-To add your gateway to the seed list, submit a PR editing [`docs-site/seeds.json`](docs-site/seeds.json):
+The gateway never relays your inference data — it only tells the SDK where to find compute nodes. All prompts and responses travel directly between your machine and the compute node.
 
-```json
-{
-  "version": 1,
-  "chain_id": "arknet-1",
-  "seeds": [
-    {"url": "https://api.arknet.arkengel.com", "operator": "st-hannibal", "https": true},
-    {"url": "https://your-gateway.example.com", "operator": "you", "https": true}
-  ]
-}
+To add your gateway to the seed list, submit a PR editing [`docs-site/seeds.json`](docs-site/seeds.json).
+
+### Wallet
+
+Your wallet address is your identity on arknet. Create one with the SDK:
+
+```python
+from arknet_sdk import Wallet
+wallet = Wallet.create()
+wallet.save()           # ~/.arknet/wallet.key
+print(wallet.address)   # 0xabc123...
 ```
 
-No SDK release needed — all SDKs fetch this file at connect time. The hardcoded fallback list in the SDK code is only used if `seeds.json` is unreachable.
+Or with the CLI: `arknet wallet create`
+
+The same wallet file works across Python, TypeScript, Rust, and the CLI. During the bootstrap period, each wallet gets 10 free inference jobs per hour and 100 per day. After bootstrap, inference is paid from your ARK balance.
 
 ```toml
 # ~/.arknet/node.toml — public gateway config

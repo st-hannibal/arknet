@@ -4,12 +4,21 @@
 //! - `chat_completion` — non-streaming completions
 //! - `chat_completion_stream` — streaming SSE completions
 //! - `list_models` — query the on-chain model registry
+//! - `infer_p2p` — direct P2P inference via libp2p to a compute node
+//!
+//! # Wallet
+//!
+//! The [`wallet::Wallet`] type holds an Ed25519 keypair for signing
+//! inference requests. Attach one to the client via [`Client::with_wallet`]
+//! or [`ConnectOptions::wallet`] to enable signed/P2P operations.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! # async fn demo() -> arknet_sdk::Result<()> {
-//! let client = arknet_sdk::Client::new("http://127.0.0.1:3000")?;
+//! let wallet = arknet_sdk::wallet::Wallet::create();
+//! let client = arknet_sdk::Client::new("http://127.0.0.1:3000")?
+//!     .with_wallet(wallet);
 //! let resp = client.chat_completion(arknet_sdk::ChatRequest {
 //!     model: "meta-llama/Llama-3-8B".into(),
 //!     messages: vec![arknet_sdk::Message {
@@ -28,17 +37,21 @@
 #![warn(missing_docs)]
 
 pub mod errors;
+pub mod p2p;
+pub mod wallet;
 
 use serde::{Deserialize, Serialize};
 
 pub use errors::{Result, SdkError};
 
 /// arknet SDK client. Wraps an HTTP connection to a node's
-/// OpenAI-compatible API surface.
+/// OpenAI-compatible API surface, with optional wallet for signed
+/// requests and P2P direct connect.
 pub struct Client {
     base_url: String,
     http: reqwest::Client,
     api_key: Option<String>,
+    wallet: Option<wallet::Wallet>,
 }
 
 impl Client {
@@ -61,7 +74,32 @@ impl Client {
             base_url,
             http,
             api_key,
+            wallet: None,
         })
+    }
+
+    /// Attach a [`wallet::Wallet`] to this client.
+    ///
+    /// Required for [`infer_p2p`](Self::infer_p2p) and signed inference
+    /// requests. The wallet's address is used as the `Authorization`
+    /// bearer token for HTTP requests when no `ARKNET_WALLET` env var
+    /// is set.
+    pub fn with_wallet(mut self, wallet: wallet::Wallet) -> Self {
+        if self.api_key.is_none() {
+            self.api_key = Some(self.wallet_address_hex(&wallet));
+        }
+        self.wallet = Some(wallet);
+        self
+    }
+
+    /// Reference to the attached wallet, if any.
+    pub fn wallet(&self) -> Option<&wallet::Wallet> {
+        self.wallet.as_ref()
+    }
+
+    /// Hex-encode the wallet address (for use as bearer token).
+    fn wallet_address_hex(&self, w: &wallet::Wallet) -> String {
+        w.address().to_hex()
     }
 
     /// Auto-discover a gateway from the on-chain registry.
@@ -107,7 +145,11 @@ impl Client {
                     continue;
                 }
                 if let Some(gw_url) = gw["url"].as_str() {
-                    return Self::new(gw_url);
+                    let mut client = Self::new(gw_url)?;
+                    if let Some(w) = opts.wallet {
+                        client = client.with_wallet(w);
+                    }
+                    return Ok(client);
                 }
             }
         }
@@ -159,6 +201,288 @@ impl Client {
             .await
             .map_err(|e| SdkError::Http(e.to_string()))
     }
+
+    /// Discover compute-node candidates for a model via the gateway,
+    /// connect directly to one over P2P, send a signed
+    /// [`InferenceJobRequest`](arknet_compute::wire::InferenceJobRequest),
+    /// and return the raw borsh-encoded response bytes.
+    ///
+    /// # Flow
+    ///
+    /// 1. `GET {gateway}/v1/candidates/{model}` to discover peer multiaddrs.
+    /// 2. Connect to the first reachable candidate via [`p2p::P2pClient`].
+    /// 3. Build an `InferenceJobRequest`, sign it with the wallet, borsh-encode.
+    /// 4. Send over the `/arknet/inference/1` protocol.
+    /// 5. Return the response bytes (caller decodes as `InferenceResponse`).
+    ///
+    /// Requires a wallet to be attached.
+    pub async fn infer_p2p(&self, req: P2pInferenceRequest) -> Result<Vec<u8>> {
+        let w = self.wallet.as_ref().ok_or(SdkError::NoWallet)?;
+
+        // 1. Discover candidates.
+        let candidates = self.discover_candidates(&req.model).await?;
+        if candidates.is_empty() {
+            return Err(SdkError::P2p("no candidates returned by gateway".into()));
+        }
+
+        // 2. Build and sign the InferenceJobRequest.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let pubkey = w.public_key();
+        let model_hash = req.model_hash.unwrap_or([0u8; 32]);
+
+        let mut job_req = arknet_compute::wire::InferenceJobRequest {
+            model_ref: req.model.clone(),
+            model_hash,
+            prompt: req.prompt.clone(),
+            max_tokens: req.max_tokens,
+            seed: req.seed.unwrap_or(0),
+            deterministic: req.deterministic,
+            stop_strings: req.stop_strings.clone(),
+            nonce: now_ms, // Use timestamp as nonce for simplicity.
+            timestamp_ms: now_ms,
+            user_pubkey: pubkey,
+            signature: arknet_common::Signature::ed25519([0u8; 64]), // Placeholder.
+            prefer_tee: req.prefer_tee,
+            encrypted_prompt: None,
+        };
+
+        // Sign the request.
+        let signing_bytes = job_req.signing_bytes();
+        job_req.signature = w.sign(&signing_bytes);
+
+        // Borsh-encode.
+        let encoded = borsh::to_vec(&job_req)
+            .map_err(|e| SdkError::Wire(format!("failed to encode request: {e}")))?;
+
+        // 3. Bootstrap check + escrow. During bootstrap, inference is free
+        // (per-wallet quota: 10/hr, 100/day). Post-bootstrap, the SDK
+        // checks balance and submits an EscrowLock tx before inference.
+        let bootstrap = self.check_bootstrap().await.unwrap_or(true);
+        if !bootstrap {
+            let balance = self.get_balance().await?;
+            // TODO: query pricing oracle for exact cost. For now use a
+            // flat estimate of 10_000 ark_atom per request.
+            let cost: u128 = 10_000;
+            if balance < cost {
+                return Err(SdkError::Api {
+                    status: 402,
+                    body: format!(
+                        "insufficient balance: have {} ark_atom, need {} ark_atom. \
+                         Fund your wallet: 0x{}",
+                        balance,
+                        cost,
+                        hex::encode(w.address().as_bytes())
+                    ),
+                });
+            }
+            // Submit EscrowLock transaction to the chain.
+            self.submit_escrow_lock(&job_req, cost).await?;
+        }
+
+        // 4. Try each candidate until one succeeds.
+        let mut last_err = String::from("no candidates tried");
+        for addr in &candidates {
+            match p2p::P2pClient::connect(addr).await {
+                Ok(mut client) => match client.infer(encoded.clone()).await {
+                    Ok(resp) => return Ok(resp),
+                    Err(e) => {
+                        last_err = format!("infer failed on {addr}: {e}");
+                        continue;
+                    }
+                },
+                Err(e) => {
+                    last_err = format!("connect failed to {addr}: {e}");
+                    continue;
+                }
+            }
+        }
+
+        Err(SdkError::P2p(format!(
+            "all candidates exhausted: {last_err}"
+        )))
+    }
+
+    /// Query the gateway for compute node candidates serving a model.
+    ///
+    /// Calls `GET {base_url}/v1/candidates/{model}` and expects a JSON
+    /// response with `{ "candidates": ["/ip4/.../p2p/...", ...] }`.
+    async fn discover_candidates(&self, model: &str) -> Result<Vec<String>> {
+        let url = format!(
+            "{}/v1/candidates/{}",
+            self.base_url,
+            urlencoding::encode(model)
+        );
+        let mut builder = self.http.get(&url);
+        if let Some(key) = &self.api_key {
+            builder = builder.header("Authorization", format!("Bearer {key}"));
+        }
+        let resp = builder
+            .send()
+            .await
+            .map_err(|e| SdkError::Http(format!("candidate discovery: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SdkError::Api { status, body });
+        }
+
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| SdkError::Http(format!("candidate response parse: {e}")))?;
+
+        let addrs = body["candidates"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(addrs)
+    }
+
+    /// Query the user's on-chain balance. Returns the balance in
+    /// ark_atom (1 ARK = 1_000_000_000 ark_atom).
+    pub async fn get_balance(&self) -> Result<u128> {
+        let w = self.wallet.as_ref().ok_or(SdkError::NoWallet)?;
+        let addr = w.address();
+        let url = format!(
+            "{}/v1/account/0x{}",
+            self.base_url,
+            hex::encode(addr.as_bytes())
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| SdkError::Http(format!("balance query: {e}")))?;
+
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Ok(0);
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SdkError::Api {
+                status: status.as_u16(),
+                body,
+            });
+        }
+
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| SdkError::Http(format!("balance parse: {e}")))?;
+        Ok(body["balance"].as_u64().unwrap_or(0) as u128)
+    }
+
+    /// Check whether the chain is still in bootstrap (free inference).
+    /// Returns `true` during bootstrap, `false` after.
+    async fn check_bootstrap(&self) -> Result<bool> {
+        let url = format!("{}/v1/bootstrap", self.base_url);
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| SdkError::Http(format!("bootstrap check: {e}")))?;
+        if !resp.status().is_success() {
+            return Ok(true);
+        }
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| SdkError::Http(format!("bootstrap parse: {e}")))?;
+        Ok(body["active"].as_bool().unwrap_or(true))
+    }
+
+    /// Submit an EscrowLock transaction to the chain. Blocks until the
+    /// tx is accepted into the mempool (not until it's finalized).
+    async fn submit_escrow_lock(
+        &self,
+        job_req: &arknet_compute::wire::InferenceJobRequest,
+        amount: u128,
+    ) -> Result<()> {
+        let w = self.wallet.as_ref().ok_or(SdkError::NoWallet)?;
+        let job_id = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(b"arknet-job-id-v1");
+            hasher.update(&job_req.derived_user_address().0);
+            hasher.update(&job_req.nonce.to_le_bytes());
+            hasher.update(&job_req.timestamp_ms.to_le_bytes());
+            let digest = hasher.finalize();
+            let mut out = [0u8; 32];
+            out.copy_from_slice(digest.as_bytes());
+            arknet_common::types::JobId::new(out)
+        };
+
+        let tx = arknet_chain::transactions::Transaction::EscrowLock {
+            from: job_req.derived_user_address(),
+            job_id,
+            amount,
+            nonce: job_req.nonce,
+            fee: 21_000,
+        };
+        let tx_bytes =
+            borsh::to_vec(&tx).map_err(|e| SdkError::Wire(format!("escrow tx encode: {e}")))?;
+        let sig = w.sign(&tx_bytes);
+        let signed = arknet_chain::transactions::SignedTransaction {
+            tx,
+            signer: w.public_key(),
+            signature: sig,
+        };
+        let signed_bytes =
+            borsh::to_vec(&signed).map_err(|e| SdkError::Wire(format!("signed tx encode: {e}")))?;
+
+        let url = format!("{}/v1/tx", self.base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .header("Content-Type", "application/octet-stream")
+            .body(signed_bytes)
+            .send()
+            .await
+            .map_err(|e| SdkError::Http(format!("escrow submit: {e}")))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SdkError::Api {
+                status: status.as_u16(),
+                body,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Parameters for a direct P2P inference request via [`Client::infer_p2p`].
+#[derive(Clone, Debug, Default)]
+pub struct P2pInferenceRequest {
+    /// Model identifier (e.g. `"meta-llama/Llama-3-8B"`).
+    pub model: String,
+    /// Prompt text.
+    pub prompt: String,
+    /// Maximum tokens to generate.
+    pub max_tokens: u32,
+    /// Expected model hash (optional; zeros if unknown).
+    pub model_hash: Option<[u8; 32]>,
+    /// Deterministic mode seed.
+    pub seed: Option<u64>,
+    /// Force deterministic mode on the compute node.
+    pub deterministic: bool,
+    /// Stop sequences.
+    pub stop_strings: Vec<String>,
+    /// Route only to TEE-capable nodes.
+    pub prefer_tee: bool,
 }
 
 const SEEDS_JSON_URL: &str = "https://arknet.arkengel.com/seeds.json";
@@ -200,12 +524,14 @@ async fn fetch_seeds() -> Vec<String> {
 // ─── Request / response types ───────────────────────────────────────
 
 /// Options for [`Client::connect`] auto-discovery.
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct ConnectOptions {
     /// Seed URLs to discover gateways. Defaults to the arknet seed list.
     pub seeds: Vec<String>,
     /// Only connect to HTTPS gateways.
     pub require_https: bool,
+    /// Wallet for signed requests and P2P inference.
+    pub wallet: Option<wallet::Wallet>,
 }
 
 /// Chat completion request.
