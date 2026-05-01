@@ -221,6 +221,14 @@ async fn do_load(state: &RpcState, req: LoadRequest) -> Result<LoadResponse> {
 
     let runtime = temp_runtime_with_manifest(state, &model_ref, manifest).await?;
     let handle = runtime.inference.load(&model_ref).await?;
+
+    if let Some(network) = state.runtime.network.as_ref() {
+        let model_refs: Vec<String> = state.manifests.lock().keys().cloned().collect();
+        let operator = crate::compute_role::local_operator(&state.runtime.data_dir);
+        let supports_tee = state.runtime.cfg.tee.enabled;
+        crate::compute_role::announce_models(network, model_refs, operator, supports_tee).await;
+    }
+
     Ok(LoadResponse {
         model_ref: model_ref.to_string(),
         digest_hex: hex::encode(handle.digest().as_bytes()),
