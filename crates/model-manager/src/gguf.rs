@@ -35,8 +35,9 @@ const MAX_STRING_LEN: u64 = 64 * 1024;
 const MAX_METADATA_ENTRIES: u64 = 256 * 1024;
 
 /// How many header bytes to pull off disk before parsing. Modern models
-/// with large tokenizer vocabs (150K+ tokens) need several MB of header.
-const HEADER_READ_SIZE: usize = 8 * 1024 * 1024;
+/// with large tokenizer vocabs (150K+ tokens) need up to 15MB of header
+/// (Gemma 4 31B = 15.05 MB). 16MB covers all known genesis models.
+const HEADER_READ_SIZE: usize = 16 * 1024 * 1024;
 
 /// GGUF value type codes from the spec (`enum gguf_type`).
 const GGUF_TYPE_UINT8: u32 = 0;
@@ -77,8 +78,15 @@ pub struct GgufHeader {
 pub async fn parse_header(path: &std::path::Path) -> Result<GgufHeader> {
     let mut f = fs::File::open(path).await?;
     let mut buf = vec![0u8; HEADER_READ_SIZE];
-    let n = f.read(&mut buf).await?;
-    buf.truncate(n);
+    let mut total = 0;
+    while total < buf.len() {
+        let n = f.read(&mut buf[total..]).await?;
+        if n == 0 {
+            break;
+        }
+        total += n;
+    }
+    buf.truncate(total);
     parse_header_bytes(&buf)
 }
 
