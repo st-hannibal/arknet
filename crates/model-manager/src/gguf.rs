@@ -34,10 +34,9 @@ const MAX_STRING_LEN: u64 = 64 * 1024;
 /// vocab arrays (e.g. Qwen3) can have 150K+ entries.
 const MAX_METADATA_ENTRIES: u64 = 256 * 1024;
 
-/// How many header bytes to pull off disk before parsing. Enough for
-/// every realistic header we have seen; if a model exceeds this we
-/// read more in a follow-up call.
-const HEADER_READ_SIZE: usize = 64 * 1024;
+/// How many header bytes to pull off disk before parsing. Modern models
+/// with large tokenizer vocabs (150K+ tokens) need several MB of header.
+const HEADER_READ_SIZE: usize = 8 * 1024 * 1024;
 
 /// GGUF value type codes from the spec (`enum gguf_type`).
 const GGUF_TYPE_UINT8: u32 = 0;
