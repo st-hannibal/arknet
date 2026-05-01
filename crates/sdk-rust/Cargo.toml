@@ -22,6 +22,7 @@ borsh          = { workspace = true }
 blake3         = { workspace = true }
 libp2p         = { workspace = true }
 zeroize        = { workspace = true }
+hex            = { workspace = true }
 dirs-next      = "2.0"
 urlencoding    = "2.1"
 

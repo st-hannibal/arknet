@@ -258,7 +258,17 @@ impl Client {
         let encoded = borsh::to_vec(&job_req)
             .map_err(|e| SdkError::Wire(format!("failed to encode request: {e}")))?;
 
-        // 3. Try each candidate until one succeeds.
+        // 3. Balance check. During bootstrap (free tier), the compute node
+        // enforces per-wallet quota (10/hr, 100/day). Post-bootstrap,
+        // this will also submit an EscrowLock tx to lock ARK on-chain
+        // before inference.
+        let balance = self.get_balance().await.unwrap_or(0);
+        if balance > 0 {
+            // User has ARK — will use paid path once escrow is wired.
+            // For now, proceed with free tier.
+        }
+
+        // 4. Try each candidate until one succeeds.
         let mut last_err = String::from("no candidates tried");
         for addr in &candidates {
             match p2p::P2pClient::connect(addr).await {
@@ -321,6 +331,42 @@ impl Client {
             .unwrap_or_default();
 
         Ok(addrs)
+    }
+
+    /// Query the user's on-chain balance. Returns the balance in
+    /// ark_atom (1 ARK = 1_000_000_000 ark_atom).
+    pub async fn get_balance(&self) -> Result<u128> {
+        let w = self.wallet.as_ref().ok_or(SdkError::NoWallet)?;
+        let addr = w.address();
+        let url = format!(
+            "{}/v1/account/0x{}",
+            self.base_url,
+            hex::encode(addr.as_bytes())
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| SdkError::Http(format!("balance query: {e}")))?;
+
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Ok(0);
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SdkError::Api {
+                status: status.as_u16(),
+                body,
+            });
+        }
+
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| SdkError::Http(format!("balance parse: {e}")))?;
+        Ok(body["balance"].as_u64().unwrap_or(0) as u128)
     }
 }
 

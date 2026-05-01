@@ -484,6 +484,7 @@ dependencies = [
  "borsh",
  "dirs-next",
  "futures",
+ "hex",
  "libp2p",
  "reqwest",
  "serde",
