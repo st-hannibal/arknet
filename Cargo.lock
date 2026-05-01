@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-chain"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-common",
  "arknet-crypto",
@@ -153,7 +153,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-cli"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "arknet-common",
@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-common"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "borsh",
  "figment",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-compute"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-consensus"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-crypto"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-governance"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -273,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-inference"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-common",
  "arknet-crypto",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-light-client"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-common",
  "arknet-crypto",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-model-manager"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-common",
  "arknet-crypto",
@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-network"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-common",
  "arknet-crypto",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-node"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "arknet-chain",
@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-payments"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-receipts"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-router"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-rpc"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -471,7 +471,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-sdk"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-common",
  "arknet-crypto",
@@ -484,7 +484,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-staking"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-treasury"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-validator"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "arknet-verifier"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "arknet-chain",
  "arknet-common",
