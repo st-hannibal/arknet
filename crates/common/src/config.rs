@@ -51,6 +51,10 @@ pub struct NodeConfig {
     /// Telemetry + observability.
     #[serde(default)]
     pub telemetry: TelemetrySection,
+
+    /// Trusted Execution Environment (TEE) settings for confidential inference.
+    #[serde(default)]
+    pub tee: TeeSection,
 }
 
 /// `[node]` section.
@@ -249,6 +253,31 @@ pub struct TelemetrySection {
     /// Sentry DSN for panic reports (optional, operator opt-in).
     #[serde(default)]
     pub sentry_dsn: Option<String>,
+}
+
+/// `[tee]` section — confidential inference via hardware TEE.
+///
+/// When `enabled = true`, the node generates an enclave keypair at boot,
+/// registers its TEE capability on-chain, and accepts `prefer_tee`
+/// requests with encrypted prompts.
+///
+/// ```toml
+/// [tee]
+/// enabled = true
+/// platform = "intel-tdx"   # or "amd-sev-snp"
+/// ```
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeeSection {
+    /// Enable TEE mode. Requires actual TEE hardware.
+    #[serde(default)]
+    pub enabled: bool,
+    /// TEE platform: `"intel-tdx"`, `"amd-sev-snp"`, or `"arm-cca"`.
+    #[serde(default)]
+    pub platform: Option<String>,
+    /// Path to the enclave keypair file. Defaults to `<data_dir>/keys/enclave.key`.
+    #[serde(default)]
+    pub enclave_key_path: Option<PathBuf>,
 }
 
 impl NodeConfig {

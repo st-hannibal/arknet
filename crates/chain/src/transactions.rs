@@ -9,8 +9,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
 use arknet_common::types::{
-    Address, Amount, Gas, Hash256, Height, NodeId, Nonce, PoolId, PubKey, Signature, Timestamp,
-    TxHash, DOMAIN_TX,
+    Address, Amount, Gas, Hash256, Height, NodeId, Nonce, PoolId, PubKey, Signature, TeeCapability,
+    Timestamp, TxHash, DOMAIN_TX,
 };
 use arknet_crypto::hash::blake3;
 
@@ -244,6 +244,107 @@ pub enum Transaction {
     /// Appended to the enum rather than inserted so the borsh
     /// discriminants of existing variants remain stable.
     Dispute(Dispute),
+    /// Lock user payment in escrow before inference dispatch.
+    ///
+    /// §11 lifecycle: CREATED → ESCROWED. Funds are held until
+    /// settlement or timeout-triggered refund.
+    EscrowLock {
+        /// User locking the funds.
+        from: Address,
+        /// Job this escrow covers.
+        job_id: arknet_common::types::JobId,
+        /// Amount to lock (ark_atom).
+        amount: Amount,
+        /// Sender nonce (for replay protection).
+        nonce: Nonce,
+        /// Gas budget.
+        fee: Gas,
+    },
+    /// Settle a locked escrow — release funds to the reward
+    /// distribution. Submitted by the router after the receipt is
+    /// verified and the dispute window has passed.
+    EscrowSettle {
+        /// Job whose escrow to settle.
+        job_id: arknet_common::types::JobId,
+        /// Receipt batch id that proves the job was completed and
+        /// verified. Must be present in `CF_RECEIPTS_SEEN`.
+        batch_id: Hash256,
+        /// Compute node operator address.
+        compute_addr: Address,
+        /// Verifier address.
+        verifier_addr: Address,
+        /// Router address.
+        router_addr: Address,
+        /// Treasury address.
+        treasury_addr: Address,
+    },
+    /// Mint block rewards for a settled receipt. Emitted by the
+    /// proposer as part of the block body — not user-submitted.
+    ///
+    /// §8.2: "next block MUST include matching REWARD_MINT." A
+    /// proposer that omits a valid RewardMint is slashable under
+    /// `CensoringMints`.
+    RewardMint {
+        /// Job the reward covers.
+        job_id: arknet_common::types::JobId,
+        /// Total reward amount (user payment + block emission).
+        total_reward: Amount,
+        /// Compute node operator address.
+        compute_addr: Address,
+        /// Verifier address.
+        verifier_addr: Address,
+        /// Router address.
+        router_addr: Address,
+        /// Treasury address.
+        treasury_addr: Address,
+        /// Output token count (for audit trail).
+        output_tokens: u32,
+    },
+    /// Register (or update) a compute node's TEE capability on-chain.
+    ///
+    /// The `capability` carries a platform-specific attestation quote
+    /// and an enclave-bound public key. Users encrypt prompts to the
+    /// enclave key for confidential inference — the host OS never sees
+    /// plaintext.
+    ///
+    /// At genesis the chain validates structural well-formedness
+    /// (non-empty quote, bounded size). Full cryptographic verification
+    /// against Intel/AMD root CAs is activated by governance once the
+    /// verification library is audited.
+    ///
+    /// Faking a TEE attestation (claiming TEE but serving outside an
+    /// enclave) is slashable under `FakeTeeAttestation` — 100% of stake.
+    RegisterTeeCapability {
+        /// Node registering TEE support.
+        node_id: NodeId,
+        /// Operator address (signer).
+        operator: Address,
+        /// TEE attestation + enclave-bound pubkey.
+        capability: TeeCapability,
+    },
+    /// Register a node as a public gateway (discoverable RPC endpoint).
+    ///
+    /// Operators expose their RPC port to serve user inference requests.
+    /// HTTPS gateways earn a 1.2x reward multiplier on routed jobs.
+    /// Users can request `require_https: true` to only route through
+    /// HTTPS gateways (no silent downgrade).
+    RegisterGateway {
+        /// Node registering as a gateway.
+        node_id: NodeId,
+        /// Operator address (signer).
+        operator: Address,
+        /// Public RPC URL (e.g. `"https://rpc.mynode.com"` or `"http://203.0.113.42:26657"`).
+        url: String,
+        /// `true` if the URL uses HTTPS (TLS-terminated).
+        https: bool,
+    },
+    /// Remove this node from the public gateway registry.
+    UnregisterGateway {
+        /// Node to remove.
+        node_id: NodeId,
+        /// Operator address (signer).
+        operator: Address,
+    },
 }
 
 impl Transaction {
@@ -382,6 +483,23 @@ mod tests {
             proposal_id: 42,
             voter: Address::new([0xdd; 20]),
             choice: VoteChoice::Yes,
+        };
+        let bytes = borsh::to_vec(&tx).unwrap();
+        let decoded: Transaction = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn register_tee_borsh_roundtrip() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let tx = Transaction::RegisterTeeCapability {
+            node_id: NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: vec![0xde; 64],
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
         };
         let bytes = borsh::to_vec(&tx).unwrap();
         let decoded: Transaction = borsh::from_slice(&bytes).unwrap();

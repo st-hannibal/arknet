@@ -5,25 +5,24 @@
 //! chooses whether to include a tx; the state layer only answers "does it
 //! apply cleanly?"
 //!
-//! # Week 3-4 coverage
+//! # Supported transactions
 //!
-//! - [`Transaction::Transfer`] — full implementation (nonce, balance, fee burn).
-//! - [`Transaction::StakeOp`] — `Deposit` wires through; other variants are
-//!   stubbed with `Rejected(NotYetImplemented)` until Week 9.
-//! - [`Transaction::ReceiptBatch`] — rejected (`NotYetImplemented`) until
-//!   Weeks 10-11.
-//! - [`Transaction::RegisterModel`] / `GovProposal` / `GovVote` — same, until
-//!   Week 9+.
+//! - [`Transaction::Transfer`] — nonce, balance, fee burn.
+//! - [`Transaction::StakeOp`] — deposit, withdraw, complete, redelegate.
+//! - [`Transaction::ReceiptBatch`] — Merkle-verified receipt anchoring.
+//! - [`Transaction::RegisterModel`] — on-chain model registry (10K ARK deposit).
+//! - [`Transaction::EscrowLock`] / [`Transaction::EscrowSettle`] — escrow lifecycle.
+//! - [`Transaction::RewardMint`] — block reward distribution (proposer-only).
+//! - [`Transaction::GovProposal`] / [`Transaction::GovVote`] — governance.
+//! - [`Transaction::Dispute`] — verifier-submitted slashing evidence.
 //!
 //! # Fee model
 //!
 //! Per PROTOCOL_SPEC §7.2: the EIP-1559 base fee is **burned** (subtracted
-//! from the sender's balance, credited to nobody). The validator tip is a
-//! separate field that flows to the proposer, wired up when consensus lands
-//! in Week 7-8. Week 3-4 implements the burn side only, using the tx's
-//! `fee` field as the gas budget priced at 1 ark_atom/gas.
+//! from the sender's balance, credited to nobody). The `fee` field is the
+//! gas budget priced at 1 ark_atom/gas.
 
-use arknet_common::types::{Address, Amount, Gas, Height, Nonce};
+use arknet_common::types::{Address, Amount, Gas, Height, JobId, Nonce};
 
 use crate::errors::{ChainError, Result};
 use crate::state::BlockCtx;
@@ -147,15 +146,69 @@ pub fn apply_tx(ctx: &mut BlockCtx<'_>, tx: &SignedTransaction) -> Result<TxOutc
         }
         Transaction::ReceiptBatch(batch) => apply_receipt_batch(ctx, batch, height),
         Transaction::Dispute(d) => apply_dispute(ctx, d, height),
-        Transaction::RegisterModel { .. } => Ok(TxOutcome::Rejected(
-            RejectReason::NotYetImplemented("RegisterModel (Week 10+)"),
-        )),
-        Transaction::GovProposal(_) => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovProposal (Week 10+)",
-        ))),
-        Transaction::GovVote { .. } => Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
-            "GovVote (Week 10+)",
-        ))),
+        Transaction::EscrowLock {
+            from,
+            job_id,
+            amount,
+            nonce,
+            fee,
+        } => apply_escrow_lock(ctx, from, job_id, *amount, *nonce, *fee, height),
+        Transaction::EscrowSettle {
+            job_id,
+            batch_id: _,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+        } => apply_escrow_settle(
+            ctx,
+            job_id,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+            height,
+        ),
+        Transaction::RewardMint {
+            job_id,
+            total_reward,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+            output_tokens: _,
+        } => apply_reward_mint(
+            ctx,
+            job_id,
+            *total_reward,
+            compute_addr,
+            verifier_addr,
+            router_addr,
+            treasury_addr,
+        ),
+        Transaction::RegisterModel {
+            manifest,
+            registrar,
+            deposit,
+        } => apply_register_model(ctx, manifest, registrar, *deposit),
+        Transaction::GovProposal(p) => apply_gov_proposal(ctx, &tx.signer, p, height),
+        Transaction::GovVote {
+            proposal_id,
+            voter,
+            choice,
+        } => apply_gov_vote(ctx, *proposal_id, voter, *choice),
+        Transaction::RegisterTeeCapability {
+            node_id,
+            operator,
+            capability,
+        } => apply_register_tee(ctx, node_id, operator, capability),
+        Transaction::RegisterGateway {
+            node_id,
+            operator,
+            url,
+            https,
+        } => apply_register_gateway(ctx, node_id, operator, url, *https, height),
+        Transaction::UnregisterGateway { node_id, .. } => apply_unregister_gateway(ctx, node_id),
     }
 }
 
@@ -221,6 +274,50 @@ fn apply_receipt_batch(
         ctx.mark_receipt_seen(&r.job_id, height)?;
     }
 
+    // Bootstrap emission: during bootstrap, every anchored receipt
+    // queues a pending reward even without an escrow lock. This
+    // solves the fair-launch chicken-and-egg problem — compute nodes
+    // earn ARK from block emission for serving free-tier requests,
+    // bootstrapping the token supply from zero.
+    //
+    // Uses `in_bootstrap_epoch` (both height AND validator-count
+    // gates) so bootstrap emission stops once 100 validators are
+    // active, not just after the 6-month time window.
+    let active_count = ctx
+        .state()
+        .iter_validators()
+        .map(|v| v.len() as u32)
+        .unwrap_or(0);
+    let in_bootstrap = crate::bootstrap::in_bootstrap_epoch(height, active_count);
+    if in_bootstrap {
+        let epoch = height / crate::bootstrap::EPOCH_LENGTH_BLOCKS;
+        let treasury = bootstrap_treasury_address();
+        for r in &batch.receipts {
+            let compute_addr = node_id_to_address(&r.compute_node);
+            let router_addr = node_id_to_address(&r.router_node);
+            let tee_mult = if r.verification_tier == crate::receipt::VerificationTier::Tee {
+                crate::pending_reward::TEE_MULTIPLIER_TEE
+            } else {
+                crate::pending_reward::TEE_MULTIPLIER_NONE
+            };
+            let pr = crate::pending_reward::PendingReward {
+                job_id: r.job_id,
+                output_tokens: r.output_token_count,
+                user_payment: 0,
+                epoch,
+                compute_addr,
+                verifier_addr: treasury,
+                router_addr,
+                treasury_addr: treasury,
+                tee_multiplier_bps: tee_mult,
+                https_multiplier_bps: crate::gateway_entry::HTTP_MULTIPLIER_BPS,
+            };
+            let pr_bytes = borsh::to_vec(&pr)
+                .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
+            ctx.set_pending_reward(&r.job_id, &pr_bytes)?;
+        }
+    }
+
     let gas_used = RECEIPT_ANCHOR_GAS_PER_RECEIPT.saturating_mul(batch.receipts.len() as u64);
     Ok(TxOutcome::Applied { gas_used })
 }
@@ -241,13 +338,9 @@ fn apply_dispute(
         return Ok(TxOutcome::Rejected(RejectReason::DisputeReceiptNotFound));
     }
 
-    // Phase-1 Dispute acceptance is a gate — the actual slashing
-    // (drain + burn/reporter/treasury split) happens in
-    // `arknet_staking::apply_slash` and is dispatched from the
-    // arknet-staking host-crate story (Phase 2). For now we record the
-    // acceptance as `Applied` so the block-builder still drains the
-    // tx; the slashing call site wires in at Week 12 when the
-    // verifier role ships its full mainline.
+    // Dispute acceptance gate. The actual slashing (drain + burn /
+    // reporter / treasury split) is dispatched from `commit_block`
+    // via `arknet_staking::apply_slash`.
     Ok(TxOutcome::Applied {
         gas_used: DISPUTE_GAS,
     })
@@ -257,8 +350,519 @@ fn apply_dispute(
 ///
 /// Matches the derivation used by the genesis loader +
 /// [`crate::genesis::genesis_to_validator_info`]: `blake3(pubkey_bytes)[..20]`.
+/// Gas for escrow lock/settle/refund.
+pub const ESCROW_LOCK_GAS: Gas = 50_000;
+/// Gas for escrow settle.
+pub const ESCROW_SETTLE_GAS: Gas = 50_000;
+/// Gas for reward mint (per recipient line).
+pub const REWARD_MINT_GAS: Gas = 30_000;
+
+/// Lock user funds in escrow for a job.
+#[allow(clippy::too_many_arguments)]
+fn apply_escrow_lock(
+    ctx: &mut BlockCtx<'_>,
+    sender: &Address,
+    job_id: &JobId,
+    amount: Amount,
+    nonce: Nonce,
+    fee: Gas,
+    height: Height,
+) -> Result<TxOutcome> {
+    if amount == 0 {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "zero-amount escrow",
+        )));
+    }
+    // Check for duplicate escrow.
+    if ctx.get_escrow(job_id)?.is_some() {
+        return Ok(TxOutcome::Rejected(RejectReason::ReceiptDoubleAnchor {
+            job_id_hex: hex::encode(job_id.0),
+        }));
+    }
+    // Debit sender.
+    let mut acct = ctx.get_account(sender)?.unwrap_or_default();
+    if acct.nonce != nonce {
+        return Ok(TxOutcome::Rejected(RejectReason::NonceMismatch {
+            expected: acct.nonce,
+            got: nonce,
+        }));
+    }
+    let total = amount.saturating_add(fee as Amount);
+    if acct.balance < total {
+        return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
+            have: acct.balance,
+            need: total,
+        }));
+    }
+    acct.balance -= total;
+    acct.nonce += 1;
+    ctx.set_account(sender, &acct)?;
+
+    // Create escrow record.
+    let entry = crate::escrow_entry::EscrowEntry {
+        job_id: *job_id,
+        user: *sender,
+        amount,
+        created_at: height,
+        state: crate::escrow_entry::EscrowState::Locked,
+    };
+    let bytes =
+        borsh::to_vec(&entry).map_err(|e| ChainError::Codec(format!("escrow encode: {e}")))?;
+    ctx.set_escrow(job_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: ESCROW_LOCK_GAS,
+    })
+}
+
+/// Settle a locked escrow. Distributes the user payment via the
+/// 75/7/5/5/3/5 split immediately, and queues a pending reward for
+/// the block-emission component (minted at the next epoch boundary).
+#[allow(clippy::too_many_arguments)]
+fn apply_escrow_settle(
+    ctx: &mut BlockCtx<'_>,
+    job_id: &JobId,
+    compute_addr: &Address,
+    verifier_addr: &Address,
+    router_addr: &Address,
+    treasury_addr: &Address,
+    height: Height,
+) -> Result<TxOutcome> {
+    let raw = match ctx.get_escrow(job_id)? {
+        Some(b) => b,
+        None => {
+            return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "escrow not found for settle",
+            )));
+        }
+    };
+    let mut entry: crate::escrow_entry::EscrowEntry =
+        borsh::from_slice(&raw).map_err(|e| ChainError::Codec(format!("escrow decode: {e}")))?;
+
+    if entry.state != crate::escrow_entry::EscrowState::Locked {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "escrow not in Locked state",
+        )));
+    }
+
+    // Phase 1: distribute the user payment portion immediately.
+    credit_reward_split(
+        ctx,
+        entry.amount,
+        compute_addr,
+        verifier_addr,
+        router_addr,
+        treasury_addr,
+    )?;
+
+    // Queue the block-emission reward for epoch-boundary minting.
+    // The exact per-token rate is computed at the epoch boundary once
+    // total_tokens for the epoch is known (two-phase settlement).
+    let epoch = height / crate::bootstrap::EPOCH_LENGTH_BLOCKS;
+    // EscrowSettle doesn't carry verification_tier; default to non-TEE.
+    // TEE multiplier is set correctly in bootstrap emission (receipt-based)
+    // and can be upgraded here once receipts are cross-referenced.
+    let pending = crate::pending_reward::PendingReward {
+        job_id: *job_id,
+        output_tokens: 0,
+        user_payment: entry.amount,
+        epoch,
+        compute_addr: *compute_addr,
+        verifier_addr: *verifier_addr,
+        router_addr: *router_addr,
+        treasury_addr: *treasury_addr,
+        tee_multiplier_bps: crate::pending_reward::TEE_MULTIPLIER_NONE,
+        https_multiplier_bps: crate::gateway_entry::HTTP_MULTIPLIER_BPS,
+    };
+    let pr_bytes = borsh::to_vec(&pending)
+        .map_err(|e| ChainError::Codec(format!("pending_reward encode: {e}")))?;
+    ctx.set_pending_reward(job_id, &pr_bytes)?;
+
+    entry.state = crate::escrow_entry::EscrowState::Settled;
+    let bytes =
+        borsh::to_vec(&entry).map_err(|e| ChainError::Codec(format!("escrow encode: {e}")))?;
+    ctx.set_escrow(job_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: ESCROW_SETTLE_GAS,
+    })
+}
+
+/// Mint block rewards for a settled job. The proposer includes this
+/// tx in the block body; the amount is drawn from the epoch emission
+/// budget (enforced by the caller in commit_block, not here — the
+/// apply layer just credits the accounts).
+fn apply_reward_mint(
+    ctx: &mut BlockCtx<'_>,
+    _job_id: &JobId,
+    total_reward: Amount,
+    compute_addr: &Address,
+    verifier_addr: &Address,
+    router_addr: &Address,
+    treasury_addr: &Address,
+) -> Result<TxOutcome> {
+    if total_reward == 0 {
+        return Ok(TxOutcome::Applied {
+            gas_used: REWARD_MINT_GAS,
+        });
+    }
+    credit_reward_split(
+        ctx,
+        total_reward,
+        compute_addr,
+        verifier_addr,
+        router_addr,
+        treasury_addr,
+    )?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REWARD_MINT_GAS * 6,
+    })
+}
+
+/// Credit the 75/7/5/5/3/5 reward split to the given addresses.
+/// `burned` (3%) is dropped — not credited anywhere.
+/// `delegators` (5%) is TODO: pro-rata split across delegators of
+/// the compute node. For now it goes to the compute address as a
+/// simplification; Phase 2 wires the delegation registry.
+/// Gas for model registration.
+pub const REGISTER_MODEL_GAS: Gas = 200_000;
+/// Minimum deposit for model registration (10,000 ARK).
+pub const MODEL_DEPOSIT: Amount = 10_000 * 1_000_000_000;
+
+/// Register a model on-chain. Debits the deposit from the registrar,
+/// persists the manifest in CF_MODELS, and rejects duplicates.
+fn apply_register_model(
+    ctx: &mut BlockCtx<'_>,
+    manifest: &crate::transactions::OnChainModelManifest,
+    registrar: &Address,
+    deposit: Amount,
+) -> Result<TxOutcome> {
+    if deposit < MODEL_DEPOSIT {
+        return Ok(TxOutcome::Rejected(RejectReason::FeeTooLow {
+            min: MODEL_DEPOSIT as Gas,
+            got: deposit as Gas,
+        }));
+    }
+    if manifest.model_id.is_empty() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "empty model_id",
+        )));
+    }
+    if ctx.get_model(&manifest.model_id)?.is_some() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "model already registered",
+        )));
+    }
+    let mut acct = ctx.get_account(registrar)?.unwrap_or_default();
+    if acct.balance < deposit {
+        return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
+            have: acct.balance,
+            need: deposit,
+        }));
+    }
+    acct.balance -= deposit;
+    ctx.set_account(registrar, &acct)?;
+
+    let bytes =
+        borsh::to_vec(manifest).map_err(|e| ChainError::Codec(format!("model encode: {e}")))?;
+    ctx.set_model(&manifest.model_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REGISTER_MODEL_GAS,
+    })
+}
+
+/// Gas for TEE capability registration.
+pub const REGISTER_TEE_GAS: Gas = 200_000;
+
+/// Minimum TEE quote size (bytes). Intel TDX quotes are ~4-5 KB,
+/// AMD SEV-SNP reports ~1-4 KB. Anything smaller is structurally invalid.
+pub const MIN_TEE_QUOTE_BYTES: usize = 128;
+
+/// Structural validation of a TEE attestation quote.
+///
+/// Checks platform-specific minimum size and header bytes. This is NOT
+/// cryptographic verification — it only catches obvious garbage. Full
+/// root-of-trust verification (Intel PCS / AMD VCEK) runs when the
+/// verification library is deployed.
+fn validate_tee_quote_structure(
+    platform: arknet_common::types::TeePlatform,
+    quote: &[u8],
+) -> std::result::Result<(), &'static str> {
+    if quote.len() < MIN_TEE_QUOTE_BYTES {
+        return Err("TEE quote too short");
+    }
+    if quote.len() > arknet_common::types::MAX_TEE_QUOTE_BYTES {
+        return Err("TEE quote exceeds size limit");
+    }
+    match platform {
+        arknet_common::types::TeePlatform::IntelTdx => {
+            // Intel TDX quotes start with version 4 (little-endian u16).
+            if quote.len() < 4 || quote[0] != 4 || quote[1] != 0 {
+                return Err("Intel TDX quote: invalid version header");
+            }
+        }
+        arknet_common::types::TeePlatform::AmdSevSnp => {
+            // AMD SEV-SNP attestation reports start with version 2.
+            if quote.len() < 4 || (quote[0] != 2 && quote[0] != 3) {
+                return Err("AMD SEV-SNP report: invalid version byte");
+            }
+        }
+        arknet_common::types::TeePlatform::ArmCca => {
+            // ARM CCA reserved — accept any well-sized quote.
+        }
+    }
+    Ok(())
+}
+
+/// Register (or update) a compute node's TEE capability on-chain.
+///
+/// Validates:
+/// - Quote passes structural validation (min size, platform header).
+/// - Quote within [`MAX_TEE_QUOTE_BYTES`].
+/// - Enclave pubkey scheme is active (Ed25519 at genesis).
+///
+/// Full cryptographic verification of the attestation quote against
+/// Intel/AMD root CAs is activated once the verification library is
+/// deployed.
+fn apply_register_tee(
+    ctx: &mut BlockCtx<'_>,
+    node_id: &arknet_common::types::NodeId,
+    _operator: &Address,
+    capability: &arknet_common::types::TeeCapability,
+) -> Result<TxOutcome> {
+    if capability.quote.is_empty() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "empty TEE attestation quote",
+        )));
+    }
+    if let Err(reason) = validate_tee_quote_structure(capability.platform, &capability.quote) {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(reason)));
+    }
+    if !capability.enclave_pubkey.scheme.is_active() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "enclave pubkey uses inactive scheme",
+        )));
+    }
+
+    let bytes =
+        borsh::to_vec(capability).map_err(|e| ChainError::Codec(format!("tee encode: {e}")))?;
+    ctx.set_tee_capability(node_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REGISTER_TEE_GAS,
+    })
+}
+
+/// Gas for gateway registration.
+pub const REGISTER_GATEWAY_GAS: Gas = 100_000;
+/// Gas for gateway unregistration.
+pub const UNREGISTER_GATEWAY_GAS: Gas = 50_000;
+
+/// Register a node as a public gateway.
+fn apply_register_gateway(
+    ctx: &mut BlockCtx<'_>,
+    node_id: &arknet_common::types::NodeId,
+    operator: &Address,
+    url: &str,
+    https: bool,
+    height: Height,
+) -> Result<TxOutcome> {
+    if url.is_empty() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "empty gateway URL",
+        )));
+    }
+    if url.len() > crate::gateway_entry::MAX_GATEWAY_URL_LEN {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "gateway URL too long",
+        )));
+    }
+    if https && !url.starts_with("https://") {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "https flag set but URL does not start with https://",
+        )));
+    }
+
+    let entry = crate::gateway_entry::GatewayEntry {
+        node_id: *node_id,
+        operator: *operator,
+        url: url.to_string(),
+        https,
+        registered_at: height,
+    };
+    let bytes =
+        borsh::to_vec(&entry).map_err(|e| ChainError::Codec(format!("gateway encode: {e}")))?;
+    ctx.set_gateway(node_id, &bytes)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: REGISTER_GATEWAY_GAS,
+    })
+}
+
+/// Remove a node from the gateway registry.
+fn apply_unregister_gateway(
+    ctx: &mut BlockCtx<'_>,
+    node_id: &arknet_common::types::NodeId,
+) -> Result<TxOutcome> {
+    ctx.delete_gateway(node_id)?;
+    Ok(TxOutcome::Applied {
+        gas_used: UNREGISTER_GATEWAY_GAS,
+    })
+}
+
+/// Gas for governance proposal submission.
+pub const GOV_PROPOSAL_GAS: Gas = 500_000;
+/// Gas for governance vote.
+pub const GOV_VOTE_GAS: Gas = 30_000;
+/// Minimum deposit for a governance proposal (10,000 ARK).
+pub const PROPOSAL_DEPOSIT: Amount = 10_000 * 1_000_000_000;
+
+/// Submit a governance proposal. Debits the deposit from the
+/// proposer's balance and creates the proposal record.
+fn apply_gov_proposal(
+    ctx: &mut BlockCtx<'_>,
+    signer: &arknet_common::types::PubKey,
+    proposal: &crate::transactions::Proposal,
+    height: Height,
+) -> Result<TxOutcome> {
+    let sender = derive_address_from_signer(signer);
+    if proposal.deposit < PROPOSAL_DEPOSIT {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "deposit below minimum",
+        )));
+    }
+    let mut acct = ctx.get_account(&sender)?.unwrap_or_default();
+    if acct.balance < proposal.deposit {
+        return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
+            have: acct.balance,
+            need: proposal.deposit,
+        }));
+    }
+    acct.balance -= proposal.deposit;
+    ctx.set_account(&sender, &acct)?;
+
+    let id = ctx.state().next_proposal_id()?;
+    let record = crate::governance_entry::ProposalRecord {
+        proposal: proposal.clone(),
+        phase: crate::governance_entry::ProposalPhase::Discussion,
+        submitted_at: height,
+    };
+    let bytes =
+        borsh::to_vec(&record).map_err(|e| ChainError::Codec(format!("proposal encode: {e}")))?;
+    ctx.set_proposal(id, &bytes)?;
+    ctx.set_next_proposal_id(id + 1)?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: GOV_PROPOSAL_GAS,
+    })
+}
+
+/// Cast a governance vote. Records the vote keyed by
+/// `(proposal_id, voter)`. Duplicate votes are rejected.
+///
+/// Only accepts votes when the proposal is in the `Voting` phase.
+/// Votes during `Discussion`, `Passed`, `Rejected`, `RejectedWithVeto`,
+/// or `Executed` are rejected.
+fn apply_gov_vote(
+    ctx: &mut BlockCtx<'_>,
+    proposal_id: u64,
+    voter: &Address,
+    choice: crate::transactions::VoteChoice,
+) -> Result<TxOutcome> {
+    // Check proposal exists and decode to verify phase.
+    let raw = match ctx.get_proposal(proposal_id)? {
+        Some(bytes) => bytes,
+        None => {
+            return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "proposal not found",
+            )));
+        }
+    };
+    let record: crate::governance_entry::ProposalRecord =
+        borsh::from_slice(&raw).map_err(|e| ChainError::Codec(format!("proposal decode: {e}")))?;
+    if record.phase != crate::governance_entry::ProposalPhase::Voting {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "proposal not in voting phase",
+        )));
+    }
+    // Check for duplicate vote.
+    let key = gov_vote_key(proposal_id, voter);
+    if ctx.get_vote(&key)?.is_some() {
+        return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+            "duplicate vote",
+        )));
+    }
+    let choice_byte = choice as u8;
+    ctx.set_vote(&key, &[choice_byte])?;
+
+    Ok(TxOutcome::Applied {
+        gas_used: GOV_VOTE_GAS,
+    })
+}
+
+/// Vote key: `proposal_id(8 BE) || voter(20)`.
+fn gov_vote_key(proposal_id: u64, voter: &Address) -> Vec<u8> {
+    let mut k = Vec::with_capacity(28);
+    k.extend_from_slice(&proposal_id.to_be_bytes());
+    k.extend_from_slice(voter.as_bytes());
+    k
+}
+
+fn credit_reward_split(
+    ctx: &mut BlockCtx<'_>,
+    total: Amount,
+    compute_addr: &Address,
+    verifier_addr: &Address,
+    router_addr: &Address,
+    treasury_addr: &Address,
+) -> Result<()> {
+    let compute = total * 75 / 100;
+    let verifier = total * 7 / 100;
+    let router = total * 5 / 100;
+    let burned = total * 3 / 100;
+    let delegators = total * 5 / 100;
+    let treasury = total - compute - verifier - router - burned - delegators;
+
+    // Compute + delegators (simplified: all to compute for now).
+    let compute_total = compute + delegators;
+
+    for (addr, amount) in [
+        (compute_addr, compute_total),
+        (verifier_addr, verifier),
+        (router_addr, router),
+        (treasury_addr, treasury),
+    ] {
+        if amount > 0 {
+            let mut acct = ctx.get_account(addr)?.unwrap_or_default();
+            acct.balance = acct.balance.saturating_add(amount);
+            ctx.set_account(addr, &acct)?;
+        }
+    }
+    // `burned` is intentionally not credited anywhere.
+    Ok(())
+}
+
 fn derive_address_from_signer(signer: &arknet_common::types::PubKey) -> Address {
     let digest = arknet_crypto::hash::blake3(&signer.bytes);
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&digest.as_bytes()[..20]);
+    Address::new(out)
+}
+
+/// Derive a 20-byte address from a NodeId. Used for bootstrap
+/// emission where we only have the node_id from the receipt.
+fn node_id_to_address(node_id: &arknet_common::types::NodeId) -> Address {
+    let digest = arknet_crypto::hash::blake3(node_id.as_bytes());
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&digest.as_bytes()[..20]);
+    Address::new(out)
+}
+
+/// Deterministic treasury address for bootstrap rewards.
+fn bootstrap_treasury_address() -> Address {
+    let digest = arknet_crypto::hash::blake3(b"arknet-treasury-v1");
     let mut out = [0u8; 20];
     out.copy_from_slice(&digest.as_bytes()[..20]);
     Address::new(out)
@@ -290,10 +894,11 @@ fn apply_transfer(
         }));
     }
 
-    // Fee is priced at 1 ark_atom per gas unit during Phase 1. The base fee
-    // curve from `fee_market.rs` becomes the multiplier once the block
-    // builder hands it in (Week 7-8).
-    let total: Amount = match amount.checked_add(fee as Amount) {
+    // EIP-1559: fee cost = gas_budget × base_fee_per_gas. The base fee
+    // is stored in CF_META and updated each block by the commit path.
+    let base_fee = ctx.state().base_fee().unwrap_or(1);
+    let fee_cost = (fee as Amount).saturating_mul(base_fee);
+    let total: Amount = match amount.checked_add(fee_cost) {
         Some(v) => v,
         None => {
             return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
@@ -559,5 +1164,435 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(e.amount, 2_500);
+    }
+
+    fn sample_manifest() -> crate::transactions::OnChainModelManifest {
+        crate::transactions::OnChainModelManifest {
+            model_id: "meta-llama/Llama-3-8B".to_string(),
+            sha256: [0xab; 32],
+            size_bytes: 4_000_000_000,
+            mirrors: vec!["https://example.com/llama3.gguf".to_string()],
+            license: "Llama-3".to_string(),
+        }
+    }
+
+    #[test]
+    fn register_model_happy_path() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, MODEL_DEPOSIT + 1_000_000);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        let outcome = apply_tx(&mut ctx, &stx).unwrap();
+        assert_eq!(
+            outcome,
+            TxOutcome::Applied {
+                gas_used: REGISTER_MODEL_GAS
+            }
+        );
+        ctx.commit().unwrap();
+
+        let acct = state.get_account(&registrar).unwrap().unwrap();
+        assert_eq!(acct.balance, 1_000_000);
+
+        let model = state.get_model("meta-llama/Llama-3-8B").unwrap();
+        assert!(model.is_some());
+        assert_eq!(model.unwrap().size_bytes, 4_000_000_000);
+    }
+
+    #[test]
+    fn register_model_rejects_duplicate() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, MODEL_DEPOSIT * 3);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx).unwrap();
+        ctx.commit().unwrap();
+
+        let stx2 = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx2).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented("model already registered")) => {}
+            other => panic!("expected duplicate rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_model_rejects_insufficient_balance() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, 100);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: MODEL_DEPOSIT,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::InsufficientBalance { .. }) => {}
+            other => panic!("expected insufficient balance, got {other:?}"),
+        }
+    }
+
+    fn valid_tdx_quote() -> Vec<u8> {
+        let mut q = vec![0u8; 256];
+        q[0] = 4; // TDX version = 4 (little-endian u16)
+        q[1] = 0;
+        q
+    }
+
+    fn valid_snp_quote() -> Vec<u8> {
+        let mut q = vec![0u8; 256];
+        q[0] = 2; // SEV-SNP version = 2
+        q
+    }
+
+    #[test]
+    fn register_tee_happy_path() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        let node_id = arknet_common::types::NodeId::new([0xaa; 32]);
+        let operator = Address::new([0xbb; 20]);
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id,
+            operator,
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: valid_tdx_quote(),
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        let outcome = apply_tx(&mut ctx, &stx).unwrap();
+        assert_eq!(
+            outcome,
+            TxOutcome::Applied {
+                gas_used: REGISTER_TEE_GAS
+            }
+        );
+        ctx.commit().unwrap();
+
+        let cap = state.get_tee_capability(&node_id).unwrap();
+        assert!(cap.is_some());
+        assert_eq!(cap.unwrap().platform, TeePlatform::IntelTdx);
+    }
+
+    #[test]
+    fn register_tee_rejects_empty_quote() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::AmdSevSnp,
+                quote: vec![],
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented("empty TEE attestation quote")) => {
+            }
+            other => panic!("expected empty quote rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_tee_rejects_oversized_quote() {
+        use arknet_common::types::{TeeCapability, TeePlatform, MAX_TEE_QUOTE_BYTES};
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: vec![0xff; MAX_TEE_QUOTE_BYTES + 1],
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "TEE quote exceeds size limit",
+            )) => {}
+            other => panic!("expected oversized quote rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_tee_update_overwrites() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        let node_id = arknet_common::types::NodeId::new([0xaa; 32]);
+        let operator = Address::new([0xbb; 20]);
+
+        // First registration: Intel TDX.
+        let stx1 = sign(Transaction::RegisterTeeCapability {
+            node_id,
+            operator,
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: valid_tdx_quote(),
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx1).unwrap();
+        ctx.commit().unwrap();
+
+        // Second registration: AMD SEV-SNP (update).
+        let stx2 = sign(Transaction::RegisterTeeCapability {
+            node_id,
+            operator,
+            capability: TeeCapability {
+                platform: TeePlatform::AmdSevSnp,
+                quote: valid_snp_quote(),
+                enclave_pubkey: PubKey::ed25519([0xdd; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx2).unwrap();
+        ctx.commit().unwrap();
+
+        let cap = state.get_tee_capability(&node_id).unwrap().unwrap();
+        assert_eq!(cap.platform, TeePlatform::AmdSevSnp);
+    }
+
+    #[test]
+    fn register_tee_rejects_bad_tdx_header() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        // Quote is long enough but has wrong version header for TDX.
+        let mut bad_quote = vec![0u8; 256];
+        bad_quote[0] = 99; // not version 4
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: bad_quote,
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "Intel TDX quote: invalid version header",
+            )) => {}
+            other => panic!("expected TDX header rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_tee_rejects_too_short_quote() {
+        use arknet_common::types::{TeeCapability, TeePlatform};
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterTeeCapability {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            capability: TeeCapability {
+                platform: TeePlatform::IntelTdx,
+                quote: vec![4, 0, 0, 0], // valid header but too short
+                enclave_pubkey: PubKey::ed25519([0xcc; 32]),
+            },
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented("TEE quote too short")) => {}
+            other => panic!("expected too-short rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_gateway_happy_path() {
+        let (_tmp, state) = tmp_state();
+        let node_id = arknet_common::types::NodeId::new([0xaa; 32]);
+        let operator = Address::new([0xbb; 20]);
+        let stx = sign(Transaction::RegisterGateway {
+            node_id,
+            operator,
+            url: "https://rpc.mynode.com".into(),
+            https: true,
+        });
+        let mut ctx = state.begin_block();
+        let outcome = apply_tx(&mut ctx, &stx).unwrap();
+        assert_eq!(
+            outcome,
+            TxOutcome::Applied {
+                gas_used: REGISTER_GATEWAY_GAS
+            }
+        );
+        ctx.commit().unwrap();
+
+        let gateways = state.iter_gateways().unwrap();
+        assert_eq!(gateways.len(), 1);
+        assert_eq!(gateways[0].url, "https://rpc.mynode.com");
+        assert!(gateways[0].https);
+    }
+
+    #[test]
+    fn register_gateway_rejects_empty_url() {
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterGateway {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            url: String::new(),
+            https: false,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented("empty gateway URL")) => {}
+            other => panic!("expected empty URL rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_gateway_rejects_https_mismatch() {
+        let (_tmp, state) = tmp_state();
+        let stx = sign(Transaction::RegisterGateway {
+            node_id: arknet_common::types::NodeId::new([0xaa; 32]),
+            operator: Address::new([0xbb; 20]),
+            url: "http://not-https.com".into(),
+            https: true, // claims https but URL is http
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "https flag set but URL does not start with https://",
+            )) => {}
+            other => panic!("expected https mismatch rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unregister_gateway_removes_entry() {
+        let (_tmp, state) = tmp_state();
+        let node_id = arknet_common::types::NodeId::new([0xaa; 32]);
+        let operator = Address::new([0xbb; 20]);
+
+        // Register.
+        let stx1 = sign(Transaction::RegisterGateway {
+            node_id,
+            operator,
+            url: "https://rpc.mynode.com".into(),
+            https: true,
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx1).unwrap();
+        ctx.commit().unwrap();
+        assert_eq!(state.iter_gateways().unwrap().len(), 1);
+
+        // Unregister.
+        let stx2 = sign(Transaction::UnregisterGateway { node_id, operator });
+        let mut ctx = state.begin_block();
+        let outcome = apply_tx(&mut ctx, &stx2).unwrap();
+        assert_eq!(
+            outcome,
+            TxOutcome::Applied {
+                gas_used: UNREGISTER_GATEWAY_GAS
+            }
+        );
+        ctx.commit().unwrap();
+        assert_eq!(state.iter_gateways().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn gateway_discovery_end_to_end() {
+        let (_tmp, state) = tmp_state();
+
+        // Register 3 gateways: 2 HTTPS, 1 HTTP.
+        for (i, (url, https)) in [
+            ("https://gw1.example.com", true),
+            ("http://203.0.113.1:26657", false),
+            ("https://gw2.example.com", true),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut node_bytes = [0u8; 32];
+            node_bytes[0] = i as u8;
+            let stx = sign(Transaction::RegisterGateway {
+                node_id: arknet_common::types::NodeId::new(node_bytes),
+                operator: Address::new([i as u8; 20]),
+                url: url.to_string(),
+                https: *https,
+            });
+            let mut ctx = state.begin_block();
+            let _ = apply_tx(&mut ctx, &stx).unwrap();
+            ctx.commit().unwrap();
+        }
+
+        // All 3 registered.
+        let all = state.iter_gateways().unwrap();
+        assert_eq!(all.len(), 3);
+
+        // SDK would filter HTTPS-only: 2 gateways.
+        let https_only: Vec<_> = all.iter().filter(|g| g.https).collect();
+        assert_eq!(https_only.len(), 2);
+
+        // Unregister one.
+        let mut node_bytes = [0u8; 32];
+        node_bytes[0] = 0;
+        let stx = sign(Transaction::UnregisterGateway {
+            node_id: arknet_common::types::NodeId::new(node_bytes),
+            operator: Address::new([0; 20]),
+        });
+        let mut ctx = state.begin_block();
+        let _ = apply_tx(&mut ctx, &stx).unwrap();
+        ctx.commit().unwrap();
+
+        // Down to 2.
+        assert_eq!(state.iter_gateways().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn register_model_rejects_low_deposit() {
+        let (_tmp, state) = tmp_state();
+        let registrar = Address::new([5; 20]);
+        {
+            let mut ctx = state.begin_block();
+            fund(&mut ctx, &registrar, MODEL_DEPOSIT * 2);
+            ctx.commit().unwrap();
+        }
+
+        let stx = sign(Transaction::RegisterModel {
+            manifest: sample_manifest(),
+            registrar,
+            deposit: 100,
+        });
+        let mut ctx = state.begin_block();
+        match apply_tx(&mut ctx, &stx).unwrap() {
+            TxOutcome::Rejected(RejectReason::FeeTooLow { .. }) => {}
+            other => panic!("expected low deposit rejection, got {other:?}"),
+        }
     }
 }

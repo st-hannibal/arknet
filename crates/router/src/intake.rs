@@ -27,7 +27,7 @@ use tracing::{debug, warn};
 use crate::candidate::CandidateRegistry;
 use crate::errors::{Result, RouterError};
 use crate::failover::{dispatch_with_failover, RouterStream};
-use crate::selection::rank_for;
+use crate::selection::{rank_for, rank_for_tee};
 
 /// Whether to gate the request on the free-tier quota.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +44,7 @@ pub struct Router {
     registry: CandidateRegistry,
     quotas: Arc<Mutex<FreeTierTracker>>,
     next_job_salt: Arc<Mutex<u64>>,
+    circuit_breaker: Arc<Mutex<arknet_chain::CircuitBreakerState>>,
 }
 
 impl Router {
@@ -53,7 +54,15 @@ impl Router {
             registry,
             quotas: Arc::new(Mutex::new(quotas)),
             next_job_salt: Arc::new(Mutex::new(0)),
+            circuit_breaker: Arc::new(Mutex::new(arknet_chain::CircuitBreakerState::genesis())),
         }
+    }
+
+    /// Shared circuit breaker handle. The node runtime calls
+    /// `evaluate()` at epoch boundaries; the router checks
+    /// `is_paused()` before accepting jobs.
+    pub fn circuit_breaker(&self) -> &Arc<Mutex<arknet_chain::CircuitBreakerState>> {
+        &self.circuit_breaker
     }
 
     /// Candidate registry (shared handle).
@@ -74,6 +83,12 @@ impl Router {
         now_ms: Timestamp,
         policy: QuotaPolicy,
     ) -> Result<(JobId, RouterStream)> {
+        if self.circuit_breaker.lock().is_paused() {
+            return Err(RouterError::Internal(
+                "inference paused — circuit breaker tripped".into(),
+            ));
+        }
+
         verify_request(&req, now_ms)?;
         let user_addr = req.derived_user_address();
 
@@ -94,10 +109,19 @@ impl Router {
         }
 
         let job_id = self.mint_job_id(&user_addr, now_ms);
-        let ranked = rank_for(&self.registry, &req.model_ref, now_ms);
-        if ranked.is_empty() {
-            return Err(RouterError::NoCandidate);
-        }
+        let ranked = if req.prefer_tee {
+            let tee_ranked = rank_for_tee(&self.registry, &req.model_ref, now_ms);
+            if tee_ranked.is_empty() {
+                return Err(RouterError::NoTeeCandidate);
+            }
+            tee_ranked
+        } else {
+            let all = rank_for(&self.registry, &req.model_ref, now_ms);
+            if all.is_empty() {
+                return Err(RouterError::NoCandidate);
+            }
+            all
+        };
         debug!(
             candidates = ranked.len(),
             %job_id,
@@ -128,8 +152,13 @@ impl Router {
 /// Run every pre-dispatch check on a request. Returns `Ok` iff the
 /// request is safe to forward.
 pub fn verify_request(req: &InferenceJobRequest, now_ms: Timestamp) -> Result<()> {
-    if req.prompt.is_empty() {
+    if req.prompt.is_empty() && req.encrypted_prompt.is_none() {
         return Err(RouterError::BadRequest("empty prompt".into()));
+    }
+    if req.prefer_tee && req.encrypted_prompt.is_none() {
+        return Err(RouterError::BadRequest(
+            "prefer_tee requires encrypted_prompt".into(),
+        ));
     }
     if req.max_tokens == 0 {
         return Err(RouterError::BadRequest("max_tokens must be > 0".into()));
@@ -199,6 +228,8 @@ mod tests {
             user_pubkey: pubkey,
             // Placeholder — we'll overwrite after signing.
             signature: Signature::ed25519([0; 64]),
+            prefer_tee: false,
+            encrypted_prompt: None,
         };
         let bytes = unsigned.signing_bytes();
         let sig = sign(&sk, &bytes);

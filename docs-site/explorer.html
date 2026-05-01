@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explorer — arknet</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; --green:#4ade80; --red:#f87171; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:800px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:24px; }
+  h2 { font-size:20px; margin:32px 0 12px; color:var(--muted); }
+  .connect-bar { display:flex; gap:8px; margin-bottom:32px; }
+  .connect-bar input { flex:1; background:var(--code-bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; color:var(--fg); font-size:14px; outline:none; }
+  .connect-bar input:focus { border-color:var(--accent); }
+  .connect-bar button { background:var(--accent); color:#000; border:none; border-radius:6px; padding:10px 20px; font-weight:600; cursor:pointer; font-size:14px; }
+  .connect-bar button:hover { opacity:0.9; }
+  .status-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; }
+  .status-dot.ok { background:var(--green); }
+  .status-dot.err { background:var(--red); }
+  .status-dot.wait { background:var(--muted); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:16px 0; }
+  .card { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:16px; }
+  .card .label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; }
+  .card .value { font-size:24px; font-weight:700; margin-top:4px; }
+  .search-bar { display:flex; gap:8px; margin:16px 0; }
+  .search-bar input { flex:1; background:var(--code-bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; color:var(--fg); font-size:14px; outline:none; }
+  .search-bar button { background:var(--code-bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:10px 16px; cursor:pointer; font-size:14px; }
+  .search-bar button:hover { border-color:var(--accent); }
+  .result { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:20px; margin:16px 0; display:none; }
+  .result.visible { display:block; }
+  .result .row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:14px; }
+  .result .row:last-child { border-bottom:none; }
+  .result .row .k { color:var(--muted); }
+  .result .row .v { font-family:"SF Mono",Menlo,monospace; font-size:13px; word-break:break-all; }
+  .models-list { list-style:none; padding:0; margin:16px 0; }
+  .models-list li { background:var(--code-bg); border:1px solid var(--border); border-radius:6px; padding:12px 16px; margin:6px 0; font-size:14px; }
+  .models-list li .name { font-weight:600; color:var(--fg); }
+  .models-list li .meta { color:var(--muted); font-size:13px; }
+  #error-msg { color:var(--red); font-size:14px; margin:8px 0; display:none; }
+  @media (max-width:600px) { .grid { grid-template-columns:1fr; } }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/privacy.html">Privacy</a>
+  <a href="/explorer.html">Explorer</a>
+  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
+</nav>
+
+<main>
+<h1><span class="status-dot wait" id="status-dot"></span>Block Explorer</h1>
+
+<div class="connect-bar">
+  <input type="text" id="rpc-url" value="http://127.0.0.1:26657" placeholder="Node RPC URL">
+  <button onclick="connect()">Connect</button>
+</div>
+<div id="error-msg"></div>
+
+<!-- Chain overview -->
+<div class="grid" id="chain-info" style="display:none">
+  <div class="card"><div class="label">Chain ID</div><div class="value" id="chain-id">—</div></div>
+  <div class="card"><div class="label">Height</div><div class="value" id="height">—</div></div>
+  <div class="card"><div class="label">Peers</div><div class="value" id="peers">—</div></div>
+  <div class="card"><div class="label">Consensus</div><div class="value" id="consensus">—</div></div>
+</div>
+
+<!-- Account lookup -->
+<h2>Account Lookup</h2>
+<div class="search-bar">
+  <input type="text" id="addr-input" placeholder="0x address (40 hex chars)">
+  <button onclick="lookupAccount()">Search</button>
+</div>
+<div class="result" id="account-result">
+  <div class="row"><span class="k">Address</span><span class="v" id="acct-addr">—</span></div>
+  <div class="row"><span class="k">Balance</span><span class="v" id="acct-balance">—</span></div>
+  <div class="row"><span class="k">Nonce</span><span class="v" id="acct-nonce">—</span></div>
+</div>
+
+<!-- Models -->
+<h2>Registered Models</h2>
+<ul class="models-list" id="models-list">
+  <li style="color:var(--muted)">Connect to a node to see models</li>
+</ul>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+
+<script>
+let RPC = '';
+
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function setDot(state) {
+  const dot = document.getElementById('status-dot');
+  dot.className = 'status-dot ' + state;
+}
+
+async function connect() {
+  RPC = document.getElementById('rpc-url').value.replace(/\/+$/, '');
+  showError('');
+  setDot('wait');
+
+  try {
+    // Fetch status
+    const statusResp = await fetch(RPC + '/v1/status');
+    const status = await statusResp.json();
+
+    document.getElementById('chain-id').textContent = status.chain_id || '—';
+    document.getElementById('height').textContent = status.height != null ? status.height.toLocaleString() : '—';
+    document.getElementById('consensus').textContent = status.consensus_running ? 'Active' : 'Inactive';
+
+    // Fetch peers
+    try {
+      const peersResp = await fetch(RPC + '/peers');
+      const peers = await peersResp.json();
+      document.getElementById('peers').textContent = peers.connected ? peers.connected.length : '0';
+    } catch { document.getElementById('peers').textContent = '?'; }
+
+    document.getElementById('chain-info').style.display = 'grid';
+    setDot('ok');
+
+    // Fetch models
+    try {
+      const modelsResp = await fetch(RPC + '/v1/models');
+      const models = await modelsResp.json();
+      const list = document.getElementById('models-list');
+      if (models.models && models.models.length > 0) {
+        list.innerHTML = models.models.map(m =>
+          `<li><span class="name">${esc(m.model_ref || m.id || 'unknown')}</span><br><span class="meta">SHA256: ${esc(m.digest_hex || m.sha256 || '—')}</span></li>`
+        ).join('');
+      } else {
+        list.innerHTML = '<li style="color:var(--muted)">No models registered</li>';
+      }
+    } catch { }
+
+    // Auto-refresh every 5 seconds
+    if (window._refreshTimer) clearInterval(window._refreshTimer);
+    window._refreshTimer = setInterval(refreshHeight, 5000);
+
+  } catch (e) {
+    setDot('err');
+    showError('Cannot connect to ' + RPC + ' — ' + e.message);
+    document.getElementById('chain-info').style.display = 'none';
+  }
+}
+
+async function refreshHeight() {
+  try {
+    const resp = await fetch(RPC + '/v1/status');
+    const data = await resp.json();
+    document.getElementById('height').textContent = data.height != null ? data.height.toLocaleString() : '—';
+    setDot('ok');
+  } catch {
+    setDot('err');
+  }
+}
+
+async function lookupAccount() {
+  const addr = document.getElementById('addr-input').value.trim();
+  const result = document.getElementById('account-result');
+  showError('');
+
+  if (!RPC) { showError('Connect to a node first'); return; }
+  if (!addr) { showError('Enter an address'); return; }
+
+  const clean = addr.replace(/^0x/, '');
+  try {
+    const resp = await fetch(RPC + '/v1/account/' + clean);
+    if (resp.ok) {
+      const data = await resp.json();
+      document.getElementById('acct-addr').textContent = '0x' + clean;
+      const bal = BigInt(data.balance || 0);
+      const ark = Number(bal) / 1e9;
+      document.getElementById('acct-balance').textContent = bal.toLocaleString() + ' ark_atom (' + ark.toFixed(9) + ' ARK)';
+      document.getElementById('acct-nonce').textContent = data.nonce || '0';
+      result.classList.add('visible');
+    } else if (resp.status === 404) {
+      document.getElementById('acct-addr').textContent = '0x' + clean;
+      document.getElementById('acct-balance').textContent = '0 (account not found)';
+      document.getElementById('acct-nonce').textContent = '0';
+      result.classList.add('visible');
+    } else {
+      const body = await resp.text();
+      showError('Lookup failed: ' + body);
+    }
+  } catch (e) {
+    showError('Request failed: ' + e.message);
+  }
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// Enter key triggers search
+document.getElementById('addr-input').addEventListener('keydown', e => { if (e.key === 'Enter') lookupAccount(); });
+document.getElementById('rpc-url').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+</script>
+
+</body>
+</html>

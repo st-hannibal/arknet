@@ -75,6 +75,7 @@ url                  = "2.5"
 # Async helper traits used by the in-process router ↔ compute dispatcher
 async-trait          = { workspace = true }
 blake3               = { workspace = true }
+ed25519-dalek        = { workspace = true }
 
 [dev-dependencies]
 tempfile             = "3.10"

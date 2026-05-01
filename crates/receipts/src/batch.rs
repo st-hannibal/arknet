@@ -158,7 +158,7 @@ pub const DOMAIN_RECEIPT_BATCH_SIG: &[u8] = b"arknet-receipt-batch-sig-v1";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arknet_chain::{ComputeProof, InferenceReceipt, Quantization};
+    use arknet_chain::{ComputeProof, InferenceReceipt, Quantization, VerificationTier};
     use arknet_common::types::{
         Address, JobId, PoolId, Signature as ApiSignature, SignatureScheme,
     };
@@ -184,6 +184,8 @@ mod tests {
             seed: 42,
             compute_proof: ComputeProof::HashChain(vec![[seed; 32]]),
             tee_attestation: None,
+            verification_tier: VerificationTier::Optimistic,
+            prompt_encrypted: false,
             timestamp_start: 1_700_000_000_000,
             timestamp_end: 1_700_000_000_500,
             compute_signature: ApiSignature::new(SignatureScheme::Ed25519, vec![0xaa; 64]).unwrap(),

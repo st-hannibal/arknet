@@ -51,6 +51,8 @@ fn sign_request_with_key(
         timestamp_ms: now_ms,
         user_pubkey: pubkey,
         signature: Signature::ed25519([0; 64]),
+        prefer_tee: false,
+        encrypted_prompt: None,
     };
     let bytes = unsigned.signing_bytes();
     let sig = sign(sk, &bytes);
@@ -107,6 +109,7 @@ fn candidate(byte: u8, stake: u128, dispatcher: Arc<dyn InferenceDispatcher>) ->
         model_refs: vec!["local/stories260K".into()],
         last_seen_ms: 1_000,
         dispatcher,
+        supports_tee: false,
     }
 }
 
@@ -262,6 +265,8 @@ async fn no_candidate_for_unknown_model_rejects_cleanly() {
         timestamp_ms: 1_000,
         user_pubkey: pubkey,
         signature: Signature::ed25519([0; 64]),
+        prefer_tee: false,
+        encrypted_prompt: None,
     };
     let bytes = unsigned.signing_bytes();
     let sig = sign(&sk, &bytes);

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Developers — arknet</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:24px; letter-spacing:-0.02em; }
+  h2 { font-size:22px; margin:36px 0 12px; }
+  h3 { font-size:18px; margin:24px 0 8px; }
+  p { margin:12px 0; } a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  code,pre { font:14px/1.5 "SF Mono",Menlo,Consolas,monospace; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:16px; overflow-x:auto; margin:16px 0; }
+  code { background:var(--code-bg); padding:2px 6px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; }
+  th { color:var(--muted); font-weight:600; }
+  ul { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/privacy.html">Privacy</a>
+  <a href="/explorer.html">Explorer</a>
+  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
+</nav>
+<main>
+
+<h1>Developer Guide</h1>
+<p>Build applications on arknet using the OpenAI-compatible API. Any existing OpenAI integration works by changing <code>base_url</code>.</p>
+
+<h2>API Reference</h2>
+<p>arknet exposes the standard OpenAI endpoints:</p>
+<table>
+  <tr><th>Endpoint</th><th>Method</th><th>Description</th></tr>
+  <tr><td><code>/v1/chat/completions</code></td><td>POST</td><td>Chat completion (streaming + non-streaming)</td></tr>
+  <tr><td><code>/v1/models</code></td><td>GET</td><td>List available models</td></tr>
+  <tr><td><code>/health</code></td><td>GET</td><td>Node health status</td></tr>
+  <tr><td><code>/v1/status</code></td><td>GET</td><td>Chain status (height, peers, consensus)</td></tr>
+  <tr><td><code>/v1/tx</code></td><td>POST</td><td>Submit a signed transaction</td></tr>
+</table>
+
+<h2>Chat completions</h2>
+<h3>Non-streaming</h3>
+<pre>curl -X POST http://localhost:26657/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "messages": [{"role": "user", "content": "Explain arknet in one sentence"}],
+    "max_tokens": 100
+  }'</pre>
+
+<h3>Streaming</h3>
+<pre>curl -X POST http://localhost:26657/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'</pre>
+<p>Streaming returns SSE events with <code>data:</code> prefixed JSON chunks, terminated by <code>data: [DONE]</code>.</p>
+
+<h2>SDKs</h2>
+
+<h3>Install</h3>
+<pre># Python
+pip install arknet-sdk
+
+# TypeScript / Node.js
+npm install arknet-sdk
+
+# Rust
+cargo add arknet-sdk</pre>
+
+<h3>Python</h3>
+<pre>from arknet_sdk import Client
+
+# Auto-discover a gateway (recommended for network usage)
+client = Client.connect()
+
+# Or connect to a specific node
+client = Client("http://localhost:26657")
+resp = client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(resp["choices"][0]["message"]["content"])
+
+# Streaming
+for chunk in client.chat_completion_stream(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Tell me a story"}],
+):
+    delta = chunk["choices"][0]["delta"]
+    if "content" in delta:
+        print(delta["content"], end="")</pre>
+
+<h3>TypeScript</h3>
+<pre>import { ArknetClient } from "arknet-sdk";
+
+const client = new ArknetClient("http://localhost:26657");
+
+// Non-streaming
+const resp = await client.chatCompletion({
+  model: "meta-llama/Llama-3.1-8B-Instruct",
+  messages: [{ role: "user", content: "Hello!" }],
+});
+console.log(resp.choices[0].message.content);
+
+// Streaming
+for await (const chunk of client.chatCompletionStream({
+  model: "meta-llama/Llama-3.1-8B-Instruct",
+  messages: [{ role: "user", content: "Tell me a story" }],
+})) {
+  process.stdout.write(chunk.choices[0].delta.content ?? "");
+}</pre>
+
+<h3>Rust</h3>
+<pre>let client = arknet_sdk::Client::new("http://localhost:26657")?;
+let resp = client.chat_completion(arknet_sdk::ChatRequest {
+    model: "meta-llama/Llama-3.1-8B-Instruct".into(),
+    messages: vec![arknet_sdk::Message {
+        role: "user".into(),
+        content: "Hello!".into(),
+    }],
+    ..Default::default()
+}).await?;
+println!("{}", resp.choices[0].message.content);</pre>
+
+<h3>Raw OpenAI SDK (advanced)</h3>
+<p>If you already have an OpenAI integration, point it at any arknet node. You'll need to know a node URL — the arknet SDKs above handle this automatically via <code>Client.connect()</code>.</p>
+<pre>from openai import OpenAI
+
+# Local node (free, no wallet needed)
+client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
+
+# Remote node (find URLs via /v1/gateways on any running node)
+# client = OpenAI(base_url="https://some-gateway:26657/v1", api_key="ark1...")
+response = client.chat.completions.create(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello from arknet"}],
+)</pre>
+
+<h2>On-chain transactions</h2>
+<p>Submit borsh-encoded signed transactions via <code>/v1/tx</code>:</p>
+<pre>curl -X POST http://localhost:26657/v1/tx \
+  -H "Content-Type: application/json" \
+  -d '{"tx_hex": "0a1b..."}'</pre>
+
+<h3>Transaction types</h3>
+<table>
+  <tr><th>Type</th><th>Description</th><th>Gas</th></tr>
+  <tr><td><code>Transfer</code></td><td>Send ARK between accounts</td><td>21,000</td></tr>
+  <tr><td><code>StakeOp</code></td><td>Deposit, withdraw, redelegate stake</td><td>100,000</td></tr>
+  <tr><td><code>RegisterModel</code></td><td>Register a model (10K ARK deposit)</td><td>200,000</td></tr>
+  <tr><td><code>EscrowLock</code></td><td>Lock funds for an inference job</td><td>50,000</td></tr>
+  <tr><td><code>GovProposal</code></td><td>Submit governance proposal (10K ARK)</td><td>500,000</td></tr>
+  <tr><td><code>GovVote</code></td><td>Vote on a proposal</td><td>30,000</td></tr>
+  <tr><td><code>RegisterTeeCapability</code></td><td>Register TEE attestation + enclave pubkey</td><td>200,000</td></tr>
+  <tr><td><code>RegisterGateway</code></td><td>Register as a public gateway (discoverable)</td><td>100,000</td></tr>
+  <tr><td><code>UnregisterGateway</code></td><td>Remove from public gateway registry</td><td>50,000</td></tr>
+</table>
+
+<h2>Building a dApp</h2>
+<p>A typical arknet dApp flow:</p>
+<ol>
+  <li><strong>List models</strong> — <code>GET /v1/models</code> to show available models to your users</li>
+  <li><strong>Submit inference</strong> — <code>POST /v1/chat/completions</code> with the user's prompt</li>
+  <li><strong>Stream response</strong> — Parse SSE chunks and render tokens as they arrive</li>
+  <li><strong>Check status</strong> — <code>GET /v1/status</code> to show chain health in your UI</li>
+</ol>
+<p>The API is identical to OpenAI, so any existing OpenAI-based application works with zero code changes beyond pointing <code>base_url</code> at an arknet node.</p>
+
+<h2>Privacy</h2>
+<ul>
+  <li><strong>Transport</strong> — all P2P traffic uses libp2p Noise encryption</li>
+  <li><strong>Prompt isolation</strong> — prompts travel only to the assigned compute node, never through consensus or gossip</li>
+  <li><strong>RPC binding</strong> — default <code>127.0.0.1</code> only; operators control exposure</li>
+  <li><strong>Confidential inference (TEE)</strong> — pass <code>prefer_tee: true</code> to route only to nodes running inside Intel TDX / AMD SEV-SNP enclaves. Prompts are encrypted to the enclave's public key (X25519 + ChaCha20-Poly1305) — even the host OS cannot read them</li>
+  <li><strong>Local mode</strong> — run your own compute node for zero-trust privacy. No network, no tokens, prompts never leave your machine</li>
+</ul>
+<p>See the <a href="/docs/privacy.html">Privacy &amp; Security</a> page for the full three-tier privacy model, TEE operator guide, and comparison with centralized providers.</p>
+
+<h3>Confidential inference example</h3>
+<pre>from arknet_sdk import Client
+
+# Auto-discover an HTTPS + TEE gateway
+client = Client.connect(require_https=True)
+response = client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Confidential question"}],
+    prefer_tee=True,      # TEE enclaves only
+    require_https=True,   # HTTPS gateways only
+)</pre>
+<p>When <code>prefer_tee</code> is set, the router only picks TEE-capable nodes. If none are available, you get a clear error — no silent downgrade.</p>
+
+<h2>Contributing</h2>
+<p>The codebase is Rust. 615 tests, clippy-clean, fmt-clean.</p>
+<pre>git clone https://github.com/st-hannibal/arknet.git
+cd arknet
+cargo test          # 615 tests
+cargo clippy -- -D warnings
+cargo fmt --check</pre>
+<p>Discussions, issues, and PRs welcome on <a href="https://github.com/st-hannibal/arknet">GitHub</a>.</p>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+</body>
+</html>

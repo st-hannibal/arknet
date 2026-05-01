@@ -91,6 +91,7 @@ ed25519-dalek        = { version = "=2.1.1", features = ["rand_core", "batch"] }
 x25519-dalek         = { version = "=2.0.1", features = ["static_secrets"] }
 aes-gcm              = "=0.10.3"
 chacha20poly1305     = "=0.10.1"
+hkdf                 = "=0.12.4"
 rand                 = "=0.8.6"
 rand_core            = "=0.6.4"
 subtle               = "=2.5.0"
@@ -110,7 +111,7 @@ tower        = "0.4"
 tower-http   = { version = "0.5", features = ["cors", "trace"] }
 tonic        = "0.12"
 prost        = "0.13"
-reqwest      = { version = "0.12", features = ["stream", "rustls-tls"] }
+reqwest      = { version = "0.12", features = ["stream", "rustls-tls", "json"] }
 
 # P2P
 libp2p       = { version = "=0.54.1", features = ["tcp", "quic", "noise", "yamux", "gossipsub", "kad", "identify", "ping", "request-response", "tokio", "macros"] }

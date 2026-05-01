@@ -208,7 +208,9 @@ dependencies = [
  "arknet-chain",
  "arknet-common",
  "arknet-crypto",
+ "arknet-governance",
  "arknet-network",
+ "arknet-payments",
  "arknet-staking",
  "async-trait",
  "blake3",
@@ -245,6 +247,7 @@ dependencies = [
  "chacha20poly1305",
  "ed25519-dalek",
  "hex",
+ "hkdf",
  "proptest",
  "rand 0.8.6",
  "rand_core 0.6.4",
@@ -262,7 +265,10 @@ version = "0.1.0"
 dependencies = [
  "arknet-chain",
  "arknet-common",
+ "borsh",
+ "serde",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -372,6 +378,7 @@ dependencies = [
  "bytes",
  "clap",
  "dirs",
+ "ed25519-dalek",
  "figment",
  "futures",
  "hex",
@@ -402,7 +409,11 @@ dependencies = [
  "arknet-chain",
  "arknet-common",
  "arknet-crypto",
+ "borsh",
+ "serde",
+ "tempfile",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -422,6 +433,7 @@ dependencies = [
 name = "arknet-router"
 version = "0.1.0"
 dependencies = [
+ "arknet-chain",
  "arknet-common",
  "arknet-compute",
  "arknet-crypto",
@@ -444,8 +456,10 @@ dependencies = [
 name = "arknet-rpc"
 version = "0.1.0"
 dependencies = [
+ "arknet-chain",
  "arknet-common",
  "axum",
+ "futures",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

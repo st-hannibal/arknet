@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>arknet — decentralized AI inference</title>
-<meta name="description" content="Fair-launch decentralized AI inference protocol. No premine. No investor round. One binary. OpenAI-compatible API.">
-<meta property="og:title" content="arknet">
-<meta property="og:description" content="Fair-launch decentralized AI inference protocol. Mainnet ships at Phase 4.">
+<meta name="description" content="Fair-launch decentralized AI inference protocol. No premine. One binary. OpenAI-compatible API. Earn ARK for serving AI models.">
+<meta property="og:title" content="arknet — decentralized AI inference">
+<meta property="og:description" content="Anyone with a computer earns ARK for serving AI models. Any developer queries AI through an OpenAI-compatible API.">
 <style>
   :root {
     --bg: #0b0d10;
@@ -15,21 +15,33 @@
     --accent: #7aa2ff;
     --code-bg: #14181e;
     --border: #222831;
+    --green: #4ade80;
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     background: var(--bg);
     color: var(--fg);
     font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 720px; margin: 0 auto; padding: 80px 24px 120px; }
-  h1 { font-size: 40px; margin: 0 0 12px; letter-spacing: -0.02em; }
+  nav {
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  nav .logo { font-weight: 700; font-size: 18px; color: var(--fg); text-decoration: none; }
+  nav a { color: var(--muted); text-decoration: none; font-size: 14px; }
+  nav a:hover { color: var(--fg); }
+  main { max-width: 720px; margin: 0 auto; padding: 60px 24px 120px; }
+  h1 { font-size: 48px; letter-spacing: -0.03em; line-height: 1.1; margin-bottom: 16px; }
   h2 { font-size: 22px; margin: 48px 0 12px; letter-spacing: -0.01em; }
-  p  { margin: 12px 0; color: var(--fg); }
-  p.lead { color: var(--muted); font-size: 18px; margin-bottom: 32px; }
-  a  { color: var(--accent); text-decoration: none; }
+  p { margin: 12px 0; }
+  .lead { color: var(--muted); font-size: 20px; margin-bottom: 32px; line-height: 1.5; }
+  a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   code, pre { font: 14px/1.5 "SF Mono", Menlo, Consolas, monospace; }
   pre {
@@ -38,19 +50,11 @@
     border-radius: 8px;
     padding: 16px;
     overflow-x: auto;
+    margin: 16px 0;
   }
   ul { padding-left: 20px; }
   li { margin: 6px 0; color: var(--muted); }
   li strong { color: var(--fg); }
-  .badge {
-    display: inline-block;
-    padding: 2px 10px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 24px;
-  }
   .promise {
     background: var(--code-bg);
     border: 1px solid var(--border);
@@ -61,6 +65,31 @@
   }
   .promise p { margin: 6px 0; }
   .promise strong { color: var(--accent); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
+  .card {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+  }
+  .card h3 { font-size: 16px; margin-bottom: 8px; }
+  .card p { font-size: 14px; color: var(--muted); margin: 0; }
+  .stat { text-align: center; }
+  .stat .num { font-size: 36px; font-weight: 700; color: var(--accent); }
+  .stat .label { font-size: 13px; color: var(--muted); }
+  .badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border: 1px solid var(--green);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--green);
+    margin-bottom: 24px;
+  }
+  @media (max-width: 600px) {
+    .grid { grid-template-columns: 1fr; }
+    h1 { font-size: 32px; }
+  }
   footer {
     margin-top: 80px;
     padding-top: 24px;
@@ -71,49 +100,121 @@
 </style>
 </head>
 <body>
+
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/privacy.html">Privacy</a>
+  <a href="/explorer.html">Explorer</a>
+  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
+</nav>
+
 <main>
-  <span class="badge">Pre-alpha · Phase 0 complete · mainnet pending</span>
-  <h1>arknet</h1>
-  <p class="lead">A fair-launch protocol for decentralized AI inference. Permissionless, censorship-resistant, globally distributed. One binary. OpenAI-compatible API.</p>
+  <span class="badge">Genesis ready</span>
+  <h1>Earn ARK for<br>serving AI models</h1>
+  <p class="lead">arknet is a decentralized network for AI inference. Run a node with any GPU, serve any open model, earn tokens. Developers install the SDK and connect — the network finds nodes automatically.</p>
+
+  <pre><span style="color:var(--muted)"># Use the network (SDK finds nodes automatically)</span>
+pip install arknet-sdk
+
+from arknet_sdk import Client
+client = Client.connect()
+response = client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello from arknet"}],
+)</pre>
+
+  <pre><span style="color:var(--muted)"># Or run locally (free, offline, your hardware)</span>
+curl -fsSL https://arknet.arkengel.com/install.sh | sh
+arknet start --role compute
+
+from arknet_sdk import Client
+client = Client("http://localhost:26657")
+response = client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello from arknet"}],
+)</pre>
 
   <div class="promise">
-    <p><strong>Fair launch — no premine, no investor round, no team allocation, no airdrop.</strong></p>
-    <p>Every ARK in circulation will be minted post-genesis against verified inference work. The maintainer holds zero tokens at launch. Source code, genesis config, and signed binaries will publish simultaneously on mainnet day.</p>
+    <p><strong>Fair launch.</strong> No premine. No investors. No team tokens. No airdrop. Every ARK is minted against verified inference work. The maintainer holds zero tokens at genesis.</p>
   </div>
 
-  <h2>What is arknet?</h2>
-  <p>A decentralized network where anyone can run a compute node and earn ARK for serving verifiable AI output, and any user can submit OpenAI-compatible inference requests and get a complete response or a full refund. The protocol is trust-minimized: no single entity can censor, seize funds, or fake work.</p>
+  <h2>How it works</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Compute nodes</h3>
+      <p>Run AI models on your hardware. Earn 75% of the reward for every verified inference job you serve.</p>
+    </div>
+    <div class="card">
+      <h3>Verifiers</h3>
+      <p>Re-execute 5% of jobs deterministically. Catch cheaters, earn 7% of rewards. Fake output = slashed stake.</p>
+    </div>
+    <div class="card">
+      <h3>Routers</h3>
+      <p>Dispatch user requests to the best compute node. Earn 5% for orchestrating the network.</p>
+    </div>
+    <div class="card">
+      <h3>Validators</h3>
+      <p>Run BFT consensus. Finalize receipts, mint rewards, govern the protocol. Tendermint-based instant finality.</p>
+    </div>
+  </div>
 
-  <h2>Roadmap</h2>
+  <h2>One binary, four roles</h2>
+  <p>Every participant runs the same <code>arknet</code> binary. Configure which roles to enable based on your hardware:</p>
+  <pre>[roles]
+validator = false
+router    = true
+compute   = true     # needs GPU
+verifier  = false</pre>
+  <p>A Raspberry Pi can route. A gaming laptop can compute. A server rack can do everything.</p>
+
+  <h2>Simple networking</h2>
+  <p>Open <strong>one port</strong> (26656 P2P) — that's it. Your node discovers peers, gossips blocks, and routes inference automatically. All P2P traffic is Noise-encrypted. The RPC port (26657) stays private to you unless you choose to run a public gateway.</p>
+
+  <h2>Three-tier privacy</h2>
+  <p>Your prompts are private at every layer:</p>
+  <div class="grid">
+    <div class="card">
+      <h3>Transport encryption</h3>
+      <p>All P2P traffic uses Noise protocol. Network eavesdroppers see nothing.</p>
+    </div>
+    <div class="card">
+      <h3>Prompt isolation</h3>
+      <p>Only the assigned compute node sees your prompt. Validators, routers, and verifiers see hashes — never content.</p>
+    </div>
+    <div class="card">
+      <h3>Confidential inference (TEE)</h3>
+      <p>Pass <code>prefer_tee: true</code> to route to hardware enclaves (Intel TDX / AMD SEV-SNP). Even the host OS cannot see your prompt — encrypted in enclave memory.</p>
+    </div>
+  </div>
+  <p>For absolute privacy: run your own local node. Inference runs on your hardware, no network, no tokens, prompts never leave your machine. <a href="/docs/privacy.html">Full privacy model</a></p>
+
+  <h2>10 models at genesis</h2>
+  <p>From edge devices to data centers — all GGUF format, verified by SHA-256:</p>
   <ul>
-    <li><strong>Phase 0 — Local single node</strong> · shipped v0.1.0 · 171 tests passing · determinism proven</li>
-    <li><strong>Phase 1 — Devnet</strong> · 4-5 validators, full L1+L2 stack · next</li>
-    <li><strong>Phase 2 — Solo testnet</strong> · payment channels, encrypted mempool, 90-day uptime</li>
-    <li><strong>Phase 3 — Closed beta</strong> · real emission, security audit, launch preparation</li>
-    <li><strong>Phase 4 — Genesis mainnet</strong> · source code goes public, first block mines, anyone can join</li>
+    <li><strong>Edge (1-3 GB)</strong> — Llama 3.2 1B, Qwen3.5 4B, Gemma 4 E2B</li>
+    <li><strong>Gamer (4-6 GB)</strong> — Qwen2.5 7B, Llama 3.1 8B, Qwen3.5 9B</li>
+    <li><strong>Prosumer (16-18 GB)</strong> — Gemma 4 26B MoE, Qwen3.6 27B, Gemma 4 31B</li>
+    <li><strong>Server (22+ GB)</strong> — Qwen3.6 35B MoE</li>
   </ul>
+  <p>Anyone can register additional models after genesis (10,000 ARK deposit). <a href="/docs/models.html">Full model list</a></p>
 
-  <h2>At genesis (Phase 4)</h2>
-  <p>On launch day this site serves docs, the operator guide, the genesis config, and a one-line installer. Until then, there is nothing to run — the protocol is under solo development. Starring or following the repository is not possible during the private phase.</p>
-
-  <pre># Available at genesis, not before
-curl -fsSL https://arknet.arkengel.com/install.sh | sh
-arknet init --network mainnet
-arknet start</pre>
-
-  <h2>Design principles</h2>
-  <ul>
-    <li><strong>Hash-only model integrity</strong> — the protocol doesn't care where a model came from, only its SHA-256.</li>
-    <li><strong>Verifiable computation</strong> — deterministic re-execution or TEE attestation; no trust assumptions on compute nodes.</li>
-    <li><strong>Zero-trust between all participants</strong> — users, routers, compute nodes, verifiers, validators are all adversarial in the threat model.</li>
-    <li><strong>Community-operated infrastructure</strong> — no founder-run gateways, seeds, forums, or support email. Everything lives on-chain or on free GitHub infrastructure.</li>
-    <li><strong>OpenAI API compatibility</strong> — decentralization is invisible to the end user. Any OpenAI client works by changing <code>base_url</code>.</li>
-  </ul>
+  <h2>The numbers</h2>
+  <div class="grid">
+    <div class="card stat"><div class="num">1B</div><div class="label">ARK hard cap</div></div>
+    <div class="card stat"><div class="num">615</div><div class="label">Tests passing</div></div>
+    <div class="card stat"><div class="num">0</div><div class="label">Tokens premined</div></div>
+    <div class="card stat"><div class="num">75%</div><div class="label">To compute operators</div></div>
+  </div>
 
   <footer>
-    <p>Apache-2.0 · no warranty · pre-release software.<br>
-    This is a static landing page; no service runs behind it.</p>
+    <p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a> · <a href="https://github.com/st-hannibal/arknet/discussions">Discussions</a></p>
   </footer>
 </main>
+
 </body>
 </html>

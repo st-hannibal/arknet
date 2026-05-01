@@ -147,6 +147,8 @@ pub struct EngineConfig {
     pub local_node_id: NodeId,
     /// Timeout configuration.
     pub timeouts: TimeoutConfig,
+    /// Genesis coinbase message — embedded in block 0's header only.
+    pub genesis_message: String,
 }
 
 /// Commands accepted over [`ConsensusHandle`].
@@ -172,6 +174,7 @@ enum Command {
 pub struct ConsensusHandle {
     tx: mpsc::Sender<Command>,
     block_events: tokio::sync::broadcast::Sender<Arc<Block>>,
+    chain_state: Arc<ChainState>,
 }
 
 impl ConsensusHandle {
@@ -202,9 +205,29 @@ impl ConsensusHandle {
         rx.await.map_err(|e| format!("engine reply lost: {e}"))
     }
 
+    /// Read an account from committed chain state (no channel needed —
+    /// RocksDB reads are safe from any thread).
+    pub async fn get_account(
+        &self,
+        addr: &arknet_common::types::Address,
+    ) -> std::result::Result<Option<arknet_chain::account::Account>, String> {
+        self.chain_state
+            .get_account(addr)
+            .map_err(|e| format!("chain state read: {e}"))
+    }
+
     /// Wait for the next finalized block. Returns an `Arc<Block>` so
     /// multiple subscribers can reference the same allocation. Used by
     /// the verifier role body to scan receipts.
+    /// List all registered public gateways from chain state.
+    pub fn iter_gateways(&self) -> std::result::Result<Vec<arknet_chain::GatewayEntry>, String> {
+        self.chain_state
+            .iter_gateways()
+            .map_err(|e| format!("iter_gateways: {e}"))
+    }
+
+    /// Subscribe to finalized blocks. Returns the next block as `Arc` so
+    /// multiple subscribers can reference the same allocation.
     pub async fn next_finalized_block(&self) -> std::result::Result<Arc<Block>, String> {
         let mut rx = self.block_events.subscribe();
         rx.recv()
@@ -232,6 +255,7 @@ impl ConsensusEngine {
         let handle = ConsensusHandle {
             tx: cmd_tx,
             block_events: block_tx.clone(),
+            chain_state: chain_state.clone(),
         };
         let join = tokio::spawn(run(
             cfg,
@@ -567,6 +591,11 @@ async fn handle_effect(
                 base_fee: *base_fee,
                 gas_limit: cfg.gas_limit,
                 bytes_budget: crate::block_builder::DEFAULT_BLOCK_BYTES_BUDGET,
+                genesis_message: if height == Height(1) {
+                    cfg.genesis_message.clone()
+                } else {
+                    String::new()
+                },
             };
             let mut mp = mempool.lock();
             match BlockBuilder::build(chain_state, &mut mp, height, params) {

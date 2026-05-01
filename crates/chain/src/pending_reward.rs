@@ -1,0 +1,57 @@
+//! Pending reward entries stored in `CF_PENDING_REWARDS`.
+//!
+//! Two-phase settlement: receipts land in epoch N, rewards are
+//! computed at the start of epoch N+1 once the total output tokens
+//! for the epoch are known. This eliminates the early-bird advantage
+//! where jobs settled early in an epoch get a disproportionate share
+//! of the emission budget.
+
+use arknet_common::types::{Address, Amount, JobId};
+use borsh::{BorshDeserialize, BorshSerialize};
+use serde::{Deserialize, Serialize};
+
+/// TEE reward multiplier: 1.0x (no TEE). 10000 basis points = 1.0x.
+pub const TEE_MULTIPLIER_NONE: u32 = 10_000;
+
+/// TEE reward multiplier: 1.5x for TEE-verified jobs.
+pub const TEE_MULTIPLIER_TEE: u32 = 15_000;
+
+/// A receipt whose escrow has been settled but whose block reward
+/// hasn't been minted yet. Queued until the next epoch boundary.
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub struct PendingReward {
+    /// Job id.
+    pub job_id: JobId,
+    /// Output tokens produced by this job.
+    pub output_tokens: u32,
+    /// User payment amount (from escrow).
+    pub user_payment: Amount,
+    /// Epoch in which the receipt settled.
+    pub epoch: u64,
+    /// Compute node operator address.
+    pub compute_addr: Address,
+    /// Verifier address.
+    pub verifier_addr: Address,
+    /// Router address.
+    pub router_addr: Address,
+    /// Treasury address.
+    pub treasury_addr: Address,
+    /// TEE reward multiplier in basis points (10000 = 1.0x, 15000 = 1.5x).
+    /// TEE-verified jobs earn more from emission.
+    #[serde(default = "default_tee_multiplier")]
+    pub tee_multiplier_bps: u32,
+    /// HTTPS gateway reward multiplier (10000 = 1.0x, 12000 = 1.2x).
+    /// Jobs routed through HTTPS gateways earn more for the router.
+    #[serde(default = "default_https_multiplier")]
+    pub https_multiplier_bps: u32,
+}
+
+/// Default multiplier for backward-compatible deserialization.
+fn default_tee_multiplier() -> u32 {
+    TEE_MULTIPLIER_NONE
+}
+
+/// Default HTTPS multiplier.
+fn default_https_multiplier() -> u32 {
+    crate::gateway_entry::HTTP_MULTIPLIER_BPS
+}

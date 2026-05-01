@@ -146,6 +146,8 @@ mod tests {
             timestamp_ms: 0,
             user_pubkey: PubKey::ed25519([0xab; 32]),
             signature: Signature::ed25519([0; 64]),
+            prefer_tee: false,
+            encrypted_prompt: None,
         };
         let a = mint_job_id(&req, 0);
         req.nonce = 2;
@@ -167,6 +169,8 @@ mod tests {
             timestamp_ms: 0,
             user_pubkey: PubKey::ed25519([0xab; 32]),
             signature: Signature::ed25519([0; 64]),
+            prefer_tee: false,
+            encrypted_prompt: None,
         };
         assert_eq!(mint_job_id(&req, 42), mint_job_id(&req, 42));
     }

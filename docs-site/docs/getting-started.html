@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting Started — arknet</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:24px; letter-spacing:-0.02em; }
+  h2 { font-size:22px; margin:36px 0 12px; }
+  h3 { font-size:18px; margin:24px 0 8px; }
+  p { margin:12px 0; } a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  code,pre { font:14px/1.5 "SF Mono",Menlo,Consolas,monospace; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:16px; overflow-x:auto; margin:16px 0; }
+  code { background:var(--code-bg); padding:2px 6px; border-radius:4px; }
+  ul,ol { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  .note { background:var(--code-bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:16px 20px; margin:20px 0; }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/privacy.html">Privacy</a>
+  <a href="/explorer.html">Explorer</a>
+  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
+</nav>
+<main>
+
+<h1>Getting Started</h1>
+<p>Three steps to join the arknet network. Total time: under 5 minutes.</p>
+
+<h2>1. Install</h2>
+<pre>curl -fsSL https://arknet.arkengel.com/install.sh | sh</pre>
+<p>Or build from source:</p>
+<pre>git clone https://github.com/st-hannibal/arknet.git
+cd arknet
+cargo build --release
+cp target/release/arknet /usr/local/bin/</pre>
+
+<h2>2. Initialize</h2>
+<pre>arknet init --network mainnet</pre>
+<p>This creates <code>~/.arknet/</code> with your node identity (keypair) and default config. Your key is generated once and persisted — it's your node's permanent identity on the network.</p>
+
+<h2>3. Configure and start</h2>
+<p>Edit <code>~/.arknet/node.toml</code> to pick your role:</p>
+
+<h3>Compute node (needs GPU)</h3>
+<pre>[roles]
+compute = true
+
+[resources.compute]
+gpu_devices = [0]
+max_vram_gb = 8
+loaded_models = ["meta-llama/Llama-3.1-8B-Instruct:Q4_K_M"]</pre>
+<pre>arknet start --role compute</pre>
+
+<h3>Router (any hardware)</h3>
+<pre>[roles]
+router = true</pre>
+<pre>arknet start --role router</pre>
+
+<h3>Validator (needs stake)</h3>
+<pre>[roles]
+validator = true</pre>
+<pre>arknet start --role validator</pre>
+
+<div class="note">
+<p><strong>Hardware guide:</strong> A Raspberry Pi 5 can run a router. A laptop with an RTX 3060 can serve 7B models. A desktop with an RTX 4090 can serve 27B models. Match the model tier to your VRAM — see <a href="/docs/models.html">Genesis Models</a>.</p>
+</div>
+
+<h2>Networking</h2>
+<p>Your node needs <strong>one public port</strong> — the P2P port (default 26656). Open it in your firewall or router. Everything else stays private.</p>
+<table>
+  <tr><th>Port</th><th>Default</th><th>Public?</th><th>Purpose</th></tr>
+  <tr><td><strong>P2P</strong></td><td>26656</td><td><strong>Yes</strong></td><td>Node discovery, block gossip, inference dispatch. Noise-encrypted.</td></tr>
+  <tr><td><strong>RPC</strong></td><td>26657</td><td>No (localhost)</td><td>Your personal dashboard — balance, explorer, submit transactions.</td></tr>
+  <tr><td><strong>Metrics</strong></td><td>9090</td><td>No (localhost)</td><td>Prometheus scrape endpoint for monitoring.</td></tr>
+</table>
+<p>This is the same as every blockchain node. Bitcoin: port 8333. Ethereum: 30303. Cosmos: 26656. Open the P2P port, the rest is private.</p>
+
+<div class="note">
+<p><strong>Want to run a public gateway?</strong> Change <code>rpc_listen</code> to <code>"0.0.0.0:26657"</code> in <code>node.toml</code>. Users can send inference requests through you and you earn the 5% router cut. This is how community gateways work — just a node with a public RPC.</p>
+<p>Register your gateway on-chain so SDKs discover it automatically. HTTPS gateways earn a <strong>1.2x reward multiplier</strong>:</p>
+<pre># HTTP gateway (any machine)
+arknet gateway register --url http://YOUR_IP:26657
+
+# HTTPS gateway (domain + TLS cert — 1.2x rewards)
+arknet gateway register --url https://rpc.mynode.com --https</pre>
+<p>See <a href="/docs/privacy.html">Privacy &amp; Security</a> for the full HTTPS vs HTTP comparison.</p>
+</div>
+
+<h2>Confidential inference (TEE)</h2>
+<p>If your server has Intel TDX or AMD SEV-SNP hardware, you can offer confidential inference — prompts are encrypted to your enclave and even your host OS cannot read them.</p>
+
+<h3>1. Generate enclave keypair</h3>
+<pre>arknet tee keygen</pre>
+<p>This creates <code>~/.arknet/keys/enclave.key</code> — an X25519 keypair. Users encrypt prompts to this key.</p>
+
+<h3>2. Register TEE on-chain</h3>
+<pre>arknet tee register --platform intel-tdx --quote-file /path/to/attestation.bin</pre>
+<p>This submits a <code>RegisterTeeCapability</code> transaction with your attestation quote and enclave public key.</p>
+
+<h3>3. Enable in config</h3>
+<pre>[tee]
+enabled = true
+platform = "intel-tdx"</pre>
+<pre>arknet start --role compute</pre>
+<p>Your node is now advertised as TEE-capable. Users sending <code>prefer_tee: true</code> requests are routed to you. TEE-verified jobs earn <strong>1.5x emission rewards</strong>.</p>
+
+<div class="note">
+<p><strong>No TEE hardware?</strong> No problem. Standard compute nodes still protect prompts via Noise-encrypted P2P and protocol-level prompt isolation. TEE adds hardware-enforced confidentiality on top. See <a href="/docs/privacy.html">Privacy &amp; Security</a> for the full model.</p>
+</div>
+
+<h2>Verify it's working</h2>
+<pre># Check node health
+curl http://localhost:26657/health
+
+# Check peers
+curl http://localhost:26657/peers
+
+# Check chain status
+curl http://localhost:26657/v1/status
+
+# List available models
+curl http://localhost:26657/v1/models</pre>
+
+<h2>Use the API</h2>
+<p>Once a compute node is serving models, any OpenAI client works:</p>
+<pre>from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
+resp = client.chat.completions.create(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True,
+)
+for chunk in resp:
+    print(chunk.choices[0].delta.content, end="")</pre>
+
+<h2>Earning ARK</h2>
+
+<div class="note">
+<p><strong>Bootstrap period (first 6 months):</strong> No stake required, no cost to users. Just start your node and earn ARK from block emission for serving free inference. This is how the token supply bootstraps from zero. See <a href="/docs/tokenomics.html#bootstrap-period">Tokenomics</a> for details.</p>
+</div>
+
+<p>Once your node is serving verified inference:</p>
+<ul>
+  <li><strong>Compute nodes</strong> earn 75% of the reward per job</li>
+  <li><strong>Routers</strong> earn 5% for dispatching</li>
+  <li><strong>Verifiers</strong> earn 7% for checking output</li>
+  <li><strong>3% is burned</strong> (deflationary)</li>
+  <li><strong>5% to treasury</strong> (governance-controlled)</li>
+  <li><strong>5% to delegators</strong> (pro-rata by staked amount)</li>
+</ul>
+<p>Rewards are minted from the emission schedule. See <a href="/docs/tokenomics.html">Tokenomics</a> for details.</p>
+
+<h2>Next steps</h2>
+<ul>
+  <li><a href="/docs/models.html">Browse genesis models</a> — pick what your hardware can serve</li>
+  <li><a href="/docs/tokenomics.html">Understand ARK economics</a> — emission, staking, governance</li>
+  <li><a href="/docs/developers.html">Build on arknet</a> — SDKs, API reference, dApp integration</li>
+  <li><a href="https://github.com/st-hannibal/arknet/discussions">Join the forum</a> — ask questions, report bugs</li>
+</ul>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+</body>
+</html>

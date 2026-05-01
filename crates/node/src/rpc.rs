@@ -1,21 +1,16 @@
-//! Phase-0 HTTP RPC endpoint.
-//!
-//! Deliberately minimal and **not** OpenAI-compatible. OpenAI-compat
-//! with streaming SSE / function-calling / tool use is Phase 2 scope,
-//! and I don't want to lock the wire format now only to break it later
-//! for external integrators.
+//! HTTP RPC endpoint — Phase 0 internal + OpenAI-compatible surface.
 //!
 //! Endpoints:
-//! - `POST /v1/inference` — body: InferRequest JSON.
-//!   Response: SSE stream, each event is an InferenceEvent JSON
-//!   blob. Terminates on Stop or channel close.
-//! - `GET  /v1/models` — list loaded model handles (from the engine cache).
-//! - `POST /v1/models/load` — body: LoadRequest, returns LoadResponse.
-//!   Phase 0 uses the same manifest flag surface as `arknet model load`.
+//! - `POST /v1/chat/completions` — OpenAI-compatible (streaming + non-streaming).
+//! - `POST /v1/inference` — Phase 0 internal format (SSE InferenceEvent blobs).
+//! - `GET  /v1/models` — list loaded model handles.
+//! - `POST /v1/models/load` — load a model by manifest.
 //! - `GET  /health` — JSON `{ "status": "ok", ... }`.
+//! - `GET  /v1/status` — chain status.
+//! - `POST /v1/tx` — submit a signed transaction.
 //!
 //! Bound to `127.0.0.1` by default — no auth in Phase 0. Public
-//! binding + wallet-session tokens come with the real API in Phase 2.
+//! binding + wallet-session tokens come with Phase 4.
 
 #![allow(dead_code)]
 
@@ -29,6 +24,7 @@ use arknet_model_manager::{GgufQuant, MockRegistry, ModelId, ModelManifest, Mode
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::{Stream, StreamExt};
@@ -88,11 +84,14 @@ pub async fn serve(bind: SocketAddr, state: RpcState, shutdown: CancellationToke
     let app = Router::new()
         .route("/health", get(health))
         .route("/peers", get(list_peers))
+        .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/models", get(list_models))
         .route("/v1/models/load", post(load_model))
         .route("/v1/inference", post(infer))
         .route("/v1/status", get(status))
+        .route("/v1/account/:address", get(get_account))
         .route("/v1/tx", post(submit_tx))
+        .route("/v1/gateways", get(list_gateways))
         .with_state(state);
 
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
@@ -232,7 +231,216 @@ async fn do_load(state: &RpcState, req: LoadRequest) -> Result<LoadResponse> {
     })
 }
 
-// ─── /v1/inference ───────────────────────────────────────────────────
+// ─── /v1/chat/completions (OpenAI-compatible) ───────────────────────
+
+async fn chat_completions(
+    State(state): State<RpcState>,
+    Json(req): Json<arknet_rpc::openai::ChatCompletionRequest>,
+) -> std::result::Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
+    use arknet_rpc::openai::*;
+
+    if req.messages.is_empty() {
+        let (status, body) = error_response(
+            StatusCode::BAD_REQUEST,
+            "messages array is empty",
+            "invalid_request_error",
+        );
+        return Err((status, Json(serde_json::to_value(body.0).unwrap())));
+    }
+
+    if req.prefer_tee && !state.runtime.cfg.tee.enabled {
+        let (status, body) = error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "prefer_tee requested but this node has no TEE capability. \
+             Route through a TEE-capable gateway or remove prefer_tee.",
+            "tee_unavailable",
+        );
+        return Err((status, Json(serde_json::to_value(body.0).unwrap())));
+    }
+
+    let model_ref = ModelRef::parse(&req.model).map_err(|e| {
+        let (status, body) = error_response(
+            StatusCode::BAD_REQUEST,
+            format!("invalid model: {e}"),
+            "invalid_request_error",
+        );
+        (status, Json(serde_json::to_value(body.0).unwrap()))
+    })?;
+
+    let manifest = state.manifest_for(&model_ref).ok_or_else(|| {
+        let (status, body) = error_response(
+            StatusCode::NOT_FOUND,
+            format!("model not loaded: {model_ref}. POST /v1/models/load first."),
+            "model_not_found",
+        );
+        (status, Json(serde_json::to_value(body.0).unwrap()))
+    })?;
+
+    let prompt = req
+        .messages
+        .iter()
+        .map(|m| format!("{}: {}", m.role, m.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let stop = req.stop.map(|s| s.into_vec()).unwrap_or_default();
+
+    let runtime = temp_runtime_with_manifest(&state, &model_ref, manifest)
+        .await
+        .map_err(|e| {
+            let (status, body) = error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string(),
+                "server_error",
+            );
+            (status, Json(serde_json::to_value(body.0).unwrap()))
+        })?;
+    let handle = runtime.inference.load(&model_ref).await.map_err(|e| {
+        let (status, body) = error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("model load failed: {e}"),
+            "server_error",
+        );
+        (status, Json(serde_json::to_value(body.0).unwrap()))
+    })?;
+
+    let inf_stream = runtime
+        .inference
+        .infer(
+            &handle,
+            InferenceRequest {
+                prompt,
+                max_tokens: req.max_tokens,
+                mode: InferenceMode::Serving,
+                sampling: SamplingParams {
+                    temperature: req.temperature as f32,
+                    top_p: req.top_p as f32,
+                    ..SamplingParams::default()
+                },
+                stop,
+            },
+        )
+        .await
+        .map_err(|e| {
+            let (status, body) = error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string(),
+                "server_error",
+            );
+            (status, Json(serde_json::to_value(body.0).unwrap()))
+        })?;
+
+    let request_id = gen_request_id();
+    let model_name = req.model.clone();
+
+    if req.stream {
+        let mut first = true;
+        let sse_stream = inf_stream.map(move |ev| {
+            let chunk = match ev {
+                Ok(ref event) => {
+                    let (role, content, finish) = match event {
+                        arknet_inference::InferenceEvent::Token(t) => {
+                            let r = if first {
+                                Some("assistant".into())
+                            } else {
+                                None
+                            };
+                            first = false;
+                            (r, Some(t.text.clone()), None)
+                        }
+                        arknet_inference::InferenceEvent::Stop(reason) => {
+                            let fr = match reason {
+                                StopReason::MaxTokens => "length",
+                                _ => "stop",
+                            };
+                            (None, None, Some(fr.to_string()))
+                        }
+                    };
+                    ChatCompletionChunk {
+                        id: request_id.clone(),
+                        object: "chat.completion.chunk",
+                        created: unix_now(),
+                        model: model_name.clone(),
+                        choices: vec![ChunkChoice {
+                            index: 0,
+                            delta: Delta { role, content },
+                            finish_reason: finish,
+                        }],
+                    }
+                }
+                Err(ref e) => ChatCompletionChunk {
+                    id: request_id.clone(),
+                    object: "chat.completion.chunk",
+                    created: unix_now(),
+                    model: model_name.clone(),
+                    choices: vec![ChunkChoice {
+                        index: 0,
+                        delta: Delta {
+                            role: None,
+                            content: Some(format!("[error: {e}]")),
+                        },
+                        finish_reason: Some("stop".into()),
+                    }],
+                },
+            };
+            let data = serde_json::to_string(&chunk).unwrap_or_default();
+            Ok::<_, std::convert::Infallible>(Event::default().data(data))
+        });
+
+        Ok(Sse::new(sse_stream)
+            .keep_alive(KeepAlive::default())
+            .into_response())
+    } else {
+        use futures::TryStreamExt;
+        let events: Vec<_> = inf_stream.try_collect().await.map_err(|e| {
+            let (status, body) = error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string(),
+                "server_error",
+            );
+            (status, Json(serde_json::to_value(body.0).unwrap()))
+        })?;
+
+        let mut text = String::new();
+        let mut finish = "stop".to_string();
+        let mut completion_tokens = 0u32;
+        for ev in &events {
+            match ev {
+                arknet_inference::InferenceEvent::Token(t) => {
+                    text.push_str(&t.text);
+                    completion_tokens += 1;
+                }
+                arknet_inference::InferenceEvent::Stop(StopReason::MaxTokens) => {
+                    finish = "length".into();
+                }
+                _ => {}
+            }
+        }
+
+        let resp = ChatCompletionResponse {
+            id: request_id,
+            object: "chat.completion",
+            created: unix_now(),
+            model: model_name,
+            choices: vec![Choice {
+                index: 0,
+                message: ChatMessage {
+                    role: "assistant".into(),
+                    content: text,
+                },
+                finish_reason: Some(finish),
+            }],
+            usage: Usage {
+                prompt_tokens: 0,
+                completion_tokens,
+                total_tokens: completion_tokens,
+            },
+        };
+        Ok(Json(resp).into_response())
+    }
+}
+
+// ─── /v1/inference (Phase 0 internal format) ────────────────────────
 
 #[derive(Deserialize)]
 struct InferRequestBody {
@@ -449,6 +657,70 @@ async fn status(State(state): State<RpcState>) -> Json<StatusResponse> {
     })
 }
 
+// ─── /v1/account/:address ────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct AccountResponse {
+    address: String,
+    balance: u128,
+    nonce: u64,
+}
+
+async fn get_account(
+    State(state): State<RpcState>,
+    axum::extract::Path(address): axum::extract::Path<String>,
+) -> std::result::Result<Json<AccountResponse>, (StatusCode, Json<ErrorBody>)> {
+    let clean = address.strip_prefix("0x").unwrap_or(&address);
+    let addr_bytes: [u8; 20] = hex::decode(clean)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorBody {
+                    error: format!("bad address hex: {e}"),
+                }),
+            )
+        })?
+        .try_into()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorBody {
+                    error: "address must be 20 bytes (40 hex chars)".into(),
+                }),
+            )
+        })?;
+
+    let Some(consensus) = state.runtime.consensus.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                error: "consensus not running — cannot query state".into(),
+            }),
+        ));
+    };
+
+    let addr = arknet_common::types::Address::new(addr_bytes);
+    match consensus.get_account(&addr).await {
+        Ok(Some(acct)) => Ok(Json(AccountResponse {
+            address: format!("0x{clean}"),
+            balance: acct.balance,
+            nonce: acct.nonce,
+        })),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorBody {
+                error: format!("account 0x{clean} not found"),
+            }),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorBody {
+                error: format!("state query failed: {e}"),
+            }),
+        )),
+    }
+}
+
 // ─── /v1/tx ──────────────────────────────────────────────────────────
 
 /// Raw request body: hex-encoded borsh bytes of a
@@ -500,6 +772,44 @@ async fn submit_tx(
         })),
         Err(msg) => Err((StatusCode::BAD_REQUEST, Json(ErrorBody { error: msg }))),
     }
+}
+
+// ─── /v1/gateways ────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct GatewayListEntry {
+    node_id: String,
+    operator: String,
+    url: String,
+    https: bool,
+    registered_at: u64,
+}
+
+#[derive(Serialize)]
+struct GatewayListResponse {
+    gateways: Vec<GatewayListEntry>,
+}
+
+async fn list_gateways(State(state): State<RpcState>) -> Json<GatewayListResponse> {
+    let entries = state
+        .runtime
+        .consensus
+        .as_ref()
+        .and_then(|c| c.iter_gateways().ok())
+        .unwrap_or_default();
+
+    let gateways = entries
+        .into_iter()
+        .map(|e| GatewayListEntry {
+            node_id: format!("{}", e.node_id),
+            operator: format!("{}", e.operator),
+            url: e.url,
+            https: e.https,
+            registered_at: e.registered_at,
+        })
+        .collect();
+
+    Json(GatewayListResponse { gateways })
 }
 
 // `StopReason` is referenced to keep it in scope for downstream

@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy &amp; Security — arknet</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:24px; letter-spacing:-0.02em; }
+  h2 { font-size:22px; margin:36px 0 12px; }
+  h3 { font-size:18px; margin:24px 0 8px; }
+  p { margin:12px 0; } a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  code,pre { font:14px/1.5 "SF Mono",Menlo,Consolas,monospace; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:16px; overflow-x:auto; margin:16px 0; }
+  code { background:var(--code-bg); padding:2px 6px; border-radius:4px; }
+  ul,ol { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  .note { background:var(--code-bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:16px 20px; margin:20px 0; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; }
+  th { color:var(--muted); font-weight:600; }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/privacy.html">Privacy</a>
+  <a href="/explorer.html">Explorer</a>
+  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
+</nav>
+<main>
+
+<h1>Privacy &amp; Security</h1>
+<p>arknet is designed so your prompts stay private at every layer — from the user's device to the compute node and back. Three tiers of protection, from transport encryption to hardware-enforced confidentiality.</p>
+
+<h2>Three-tier privacy model</h2>
+<table>
+  <tr>
+    <th>Tier</th>
+    <th>Protection</th>
+    <th>Available at genesis</th>
+    <th>What it protects</th>
+  </tr>
+  <tr>
+    <td><strong>Transport encryption</strong></td>
+    <td>Noise protocol (libp2p)</td>
+    <td>Yes</td>
+    <td>All P2P traffic encrypted. Eavesdroppers on the network see nothing.</td>
+  </tr>
+  <tr>
+    <td><strong>Prompt isolation</strong></td>
+    <td>Protocol design</td>
+    <td>Yes</td>
+    <td>Only the assigned compute node sees your prompt. Validators, routers, verifiers see hashes and token counts — never content. Consensus never touches prompt data.</td>
+  </tr>
+  <tr>
+    <td><strong>Confidential inference (TEE)</strong></td>
+    <td>Hardware enclaves (Intel TDX / AMD SEV-SNP)</td>
+    <td>Yes (protocol ready, hardware-dependent)</td>
+    <td>Even the compute node's host OS cannot see your prompt. The model runs inside a Trusted Execution Environment — encrypted memory that only the CPU can access.</td>
+  </tr>
+</table>
+
+<h2>How prompt encryption works (TEE)</h2>
+<p>When a user sends a request to a TEE-capable compute node, the prompt never exists in plaintext outside the hardware enclave.</p>
+
+<pre>User                          Enclave (inside TEE)         Host OS
+  |                                |                          |
+  | 1. Get enclave public key      |                          |
+  |   (from chain state)           |                          |
+  |&lt;-----------------------------&gt;|                          |
+  |                                |                          |
+  | 2. Encrypt prompt to           |                          |
+  |    enclave pubkey              |                          |
+  |    (X25519 + ChaCha20)         |                          |
+  |-------------------------------&gt;| 3. Decrypt inside        |
+  |                                |    enclave               | sees: encrypted blob
+  |                                | 4. Run inference         | sees: nothing
+  |                                |    (in enclave memory)   |
+  | 5. Tokens stream back          |                          |
+  |    over Noise-encrypted P2P    |                          |
+  |&lt;-------------------------------|                          | sees: encrypted blob</pre>
+
+<p>The full flow:</p>
+<ol>
+  <li><strong>User generates an ephemeral X25519 keypair</strong> — one per request, discarded after.</li>
+  <li><strong>ECDH with the enclave's public key</strong> produces a shared secret. The enclave's pubkey is published on-chain when the node registers.</li>
+  <li><strong>HKDF-SHA256 derives a symmetric key</strong> from the shared secret.</li>
+  <li><strong>ChaCha20-Poly1305 encrypts the prompt</strong> — authenticated encryption, tamper-evident.</li>
+  <li><strong>The enclave decrypts using its private key</strong>, which was generated inside the TEE and never leaves enclave memory.</li>
+  <li><strong>Inference runs entirely in enclave memory.</strong> The host OS, hypervisor, and other processes cannot read it.</li>
+  <li><strong>Response tokens stream back</strong> over the Noise-encrypted P2P channel.</li>
+</ol>
+
+<div class="note">
+<p><strong>Cryptography:</strong> All primitives are from audited Rust crates — <code>x25519-dalek</code>, <code>chacha20poly1305</code>, <code>hkdf</code>, <code>sha2</code>. No custom cryptography.</p>
+</div>
+
+<h2>Using confidential inference</h2>
+<p>Set <code>prefer_tee=True</code> and the router will only dispatch your request to TEE-capable compute nodes.</p>
+
+<h3>arknet Python SDK (recommended)</h3>
+<pre>from arknet_sdk import Client
+
+# Auto-discovers HTTPS gateways from on-chain registry
+client = Client.connect(require_https=True)
+response = client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Confidential question here"}],
+    prefer_tee=True,
+    require_https=True,
+)</pre>
+
+<h3>Raw OpenAI SDK (advanced)</h3>
+<p>If using the OpenAI SDK directly, point at any arknet node. You'll need a gateway URL — the arknet SDK above finds one automatically.</p>
+<pre>from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
+response = client.chat.completions.create(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Confidential question here"}],
+    extra_body={"prefer_tee": True, "require_https": True},
+)</pre>
+
+<div class="note">
+<p><strong>No silent downgrades.</strong> When <code>prefer_tee=True</code>, the router only picks TEE-capable nodes. If none are available, you get a clear error — the request is never silently routed to a non-TEE node.</p>
+</div>
+
+<h2>For node operators: enabling TEE</h2>
+<p>If your hardware supports Intel TDX or AMD SEV-SNP, you can register as a TEE-capable compute node in five steps.</p>
+
+<ol>
+  <li><strong>Generate enclave keypair:</strong>
+    <pre>arknet tee keygen</pre>
+  </li>
+  <li><strong>Get attestation quote</strong> from your TEE hardware. This proves your CPU supports a genuine enclave.</li>
+  <li><strong>Register on-chain:</strong>
+    <pre>arknet tee register --platform intel-tdx --quote-file quote.bin</pre>
+  </li>
+  <li><strong>Enable in config</strong> (<code>~/.arknet/node.toml</code>):
+    <pre>[tee]
+enabled = true
+platform = "intel-tdx"</pre>
+  </li>
+  <li><strong>Restart your node.</strong> It is now advertised as TEE-capable and receives confidential inference requests.</li>
+</ol>
+
+<h2>TEE economics</h2>
+<table>
+  <tr><th>Rule</th><th>Detail</th></tr>
+  <tr><td><strong>1.5x emission rewards</strong></td><td>TEE-verified inference jobs earn 50% more ARK than standard jobs. This incentivizes nodes to run confidential inference.</td></tr>
+  <tr><td><strong>Fake attestation = 100% slash</strong></td><td>Submitting a fraudulent TEE attestation (<code>FakeTeeAttestation</code> offense) results in total loss of staked ARK. No warnings, no partial slash.</td></tr>
+  <tr><td><strong>No registration deposit</strong></td><td>TEE registration is free. Unlike model registration (which costs 10,000 ARK as a spam deterrent), enabling TEE has no deposit requirement.</td></tr>
+</table>
+
+<h2>What TEE does NOT protect against</h2>
+<p>Honesty about limitations:</p>
+<ul>
+  <li><strong>Metadata is visible.</strong> TEE does not hide which model you are querying or how many tokens were generated. These values appear in inference receipts — they are required for verification and reward calculation.</li>
+  <li><strong>CPU side-channel attacks.</strong> TEE does not protect against side-channel vulnerabilities in specific CPU implementations (e.g., speculative execution attacks). Intel and AMD patch these as they are discovered, but they exist in the threat model.</li>
+  <li><strong>Genesis-era attestation is structural.</strong> At genesis, TEE quote verification checks the quote structure and signature format. Full root-of-trust verification against Intel/AMD certificate authorities will be activated once the verification library is deployed and audited. This is a known gap documented in the security model.</li>
+</ul>
+
+<h2>HTTPS gateways: last-mile encryption</h2>
+<p>When you connect to a public gateway, the "last mile" between your device and the gateway can be observed by your ISP, wifi operator, or VPN provider. HTTPS protects this segment with TLS.</p>
+
+<table>
+  <tr><th>Connection</th><th>Last mile</th><th>P2P layer</th><th>Prompt content</th></tr>
+  <tr><td>HTTP gateway</td><td>Plaintext</td><td>Noise-encrypted</td><td>Visible to network observers on last mile</td></tr>
+  <tr><td>HTTPS gateway</td><td>TLS-encrypted</td><td>Noise-encrypted</td><td>Protected everywhere</td></tr>
+  <tr><td>HTTPS + TEE</td><td>TLS-encrypted</td><td>Noise-encrypted</td><td>Protected + enclave-encrypted</td></tr>
+</table>
+
+<h3>For users</h3>
+<pre>from arknet_sdk import Client
+
+client = Client.connect(require_https=True)  # auto-discover HTTPS gateway
+response = client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Private question"}],
+    require_https=True,  # only HTTPS gateways
+)</pre>
+<p>When <code>require_https</code> is set, the router only picks HTTPS gateways. No silent downgrade — if no HTTPS gateway is available, you get a clear error.</p>
+
+<h3>For operators</h3>
+<p>HTTPS gateways earn a <strong>1.2x reward multiplier</strong> on routed jobs. Setup:</p>
+<ol>
+  <li>Get a domain and a Let's Encrypt TLS certificate (free)</li>
+  <li>Configure a reverse proxy (nginx/caddy) to terminate TLS and forward to <code>localhost:26657</code></li>
+  <li>Register: <code>arknet gateway register --url https://rpc.mynode.com --https</code></li>
+</ol>
+<p>HTTPS + TEE multipliers stack: a job routed through an HTTPS gateway to a TEE node earns <strong>1.8x</strong> emission (1.2 x 1.5).</p>
+
+<h3>Gateway auto-discovery</h3>
+<p>SDKs can discover gateways automatically from the on-chain registry:</p>
+<pre># Python — auto-discover and connect
+from arknet_sdk import Client
+client = Client.connect(require_https=True)
+
+# TypeScript — auto-discover and connect
+const client = await ArknetClient.connect({ requireHttps: true });</pre>
+<p>No hardcoded URLs needed. The SDK contacts a seed node, reads <code>/v1/gateways</code>, and picks the best HTTPS gateway.</p>
+
+<h2>Full privacy: run your own node</h2>
+<p>For absolute privacy with zero trust required, run inference locally. No network interaction, no tokens spent, no prompts leaving your machine.</p>
+
+<pre>arknet start --role compute</pre>
+
+<ul>
+  <li><strong>100% local inference</strong> — your hardware, your models, your data.</li>
+  <li><strong>No network interaction</strong> — the node does not connect to peers.</li>
+  <li><strong>No cost</strong> — no ARK tokens spent for local inference.</li>
+  <li><strong>Free forever</strong> — this is a feature, not a limitation.</li>
+</ul>
+
+<p>Point any OpenAI-compatible client at <code>http://localhost:26657/v1</code> and use it like any other local inference server.</p>
+
+<h2>Compared to centralized providers</h2>
+<table>
+  <tr>
+    <th></th>
+    <th>OpenAI / Anthropic</th>
+    <th>arknet (standard)</th>
+    <th>arknet (TEE)</th>
+    <th>arknet (local)</th>
+  </tr>
+  <tr>
+    <td><strong>Who sees your prompt</strong></td>
+    <td>Provider's servers, employees with access</td>
+    <td>Assigned compute node only</td>
+    <td>Nobody (encrypted in TEE memory)</td>
+    <td>Nobody (local)</td>
+  </tr>
+  <tr>
+    <td><strong>Transport</strong></td>
+    <td>TLS to provider</td>
+    <td>Noise-encrypted P2P</td>
+    <td>Noise-encrypted P2P</td>
+    <td>Localhost</td>
+  </tr>
+  <tr>
+    <td><strong>Data retention</strong></td>
+    <td>Provider's policy</td>
+    <td>None (not stored)</td>
+    <td>None (encrypted, ephemeral)</td>
+    <td>None</td>
+  </tr>
+  <tr>
+    <td><strong>Kill switch</strong></td>
+    <td>Provider can cut access</td>
+    <td>Permissionless</td>
+    <td>Permissionless</td>
+    <td>Your hardware</td>
+  </tr>
+</table>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+</body>
+</html>

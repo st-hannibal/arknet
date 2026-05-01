@@ -73,6 +73,7 @@ async fn node_level_l2_roundtrip() {
         model_refs: vec!["local/echo".into()],
         last_seen_ms: 1_000,
         dispatcher: Arc::new(EchoDispatcher),
+        supports_tee: false,
     });
     let router = Router::new(registry, FreeTierTracker::new(FreeTierConfig::default()));
 
@@ -90,6 +91,8 @@ async fn node_level_l2_roundtrip() {
         timestamp_ms: 1_000,
         user_pubkey: sk.verifying_key().to_pubkey(),
         signature: Signature::ed25519([0; 64]),
+        prefer_tee: false,
+        encrypted_prompt: None,
     };
     let sig = sign(&sk, &unsigned.signing_bytes());
     let req = InferenceJobRequest {

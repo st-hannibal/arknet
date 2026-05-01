@@ -90,6 +90,36 @@ fn apply_deposit(
         }
     }
 
+    // Enforce min_stake after bootstrap (§9.1 + §9.4).
+    // During bootstrap both gates are open and min_stake returns 0,
+    // so this is a no-op. After bootstrap, the base stake per role
+    // applies. Model-specific multipliers (Compute role) are enforced
+    // at the staking crate level during epoch recomputation; here we
+    // check only the role base minimum.
+    //
+    // The check considers the *resulting* stake (existing + deposit)
+    // so top-ups to an existing position can be any size as long as
+    // the total meets the floor.
+    let active_count = ctx
+        .state()
+        .iter_validators()
+        .map(|v| v.len() as u32)
+        .unwrap_or(0);
+    if !crate::bootstrap::in_bootstrap_epoch(height, active_count) {
+        let base_min = inline_base_min_stake(role);
+        let pool_bytes_check = pool_id.map(|p| p.0);
+        let existing_amount = ctx
+            .get_stake(node_id, role, pool_bytes_check, delegator.as_ref())?
+            .map(|e| e.amount)
+            .unwrap_or(0);
+        let resulting = existing_amount.saturating_add(amount);
+        if resulting < base_min {
+            return Ok(TxOutcome::Rejected(RejectReason::NotYetImplemented(
+                "stake below minimum for this role",
+            )));
+        }
+    }
+
     let mut acct = ctx.get_account(sender)?.unwrap_or_default();
     if acct.balance < amount {
         return Ok(TxOutcome::Rejected(RejectReason::InsufficientBalance {
@@ -266,6 +296,24 @@ fn apply_redelegate(
     Ok(TxOutcome::Applied {
         gas_used: STAKE_OP_GAS,
     })
+}
+
+/// §9.1 base minimum stake per role, in `ark_atom`.
+///
+/// Inlined here to avoid a `chain → staking` dependency cycle.
+/// The authoritative values live in `arknet_staking::min_stake`;
+/// this function mirrors the role-base portion only. Compute-role
+/// model-specific multipliers (size × quant) are enforced during
+/// epoch recomputation in the staking crate.
+fn inline_base_min_stake(role: StakeRole) -> Amount {
+    use arknet_common::types::ATOMS_PER_ARK;
+    let base_ark: u128 = match role {
+        StakeRole::Validator => 50_000,
+        StakeRole::Router => 8_000,
+        StakeRole::Verifier => 10_000,
+        StakeRole::Compute => 5_000,
+    };
+    base_ark * ATOMS_PER_ARK
 }
 
 // Silence unused-warning when ChainError is only surfaced via `?`.
