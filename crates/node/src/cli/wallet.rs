@@ -1,4 +1,4 @@
-//! `arknet wallet` — key management, balance queries, transfers.
+//! `arknet wallet` — key management, balance queries, transfers, staking.
 
 use std::path::Path;
 
@@ -17,6 +17,14 @@ pub enum WalletCmd {
     Balance(BalanceArgs),
     /// Send ARK to another address.
     Send(SendArgs),
+    /// Stake ARK for a role (validator, router, compute, verifier).
+    Stake(StakeArgs),
+    /// Begin unstaking ARK (starts 14-day unbonding period).
+    Unstake(UnstakeArgs),
+    /// Finalize a completed unbonding and reclaim ARK.
+    CompleteUnbond(CompleteUnbondArgs),
+    /// Move staked ARK from one node to another.
+    Redelegate(RedelegateArgs),
 }
 
 #[derive(Args, Debug)]
@@ -51,6 +59,61 @@ pub struct SendArgs {
     pub rpc: String,
 }
 
+#[derive(Args, Debug)]
+pub struct StakeArgs {
+    /// Amount in ark_atom to stake.
+    #[arg(long)]
+    pub amount: u64,
+    /// Role to stake for: validator, router, compute, verifier.
+    #[arg(long)]
+    pub role: String,
+    /// RPC endpoint of a running node.
+    #[arg(long, default_value = "http://127.0.0.1:26657")]
+    pub rpc: String,
+}
+
+#[derive(Args, Debug)]
+pub struct UnstakeArgs {
+    /// Amount in ark_atom to unstake.
+    #[arg(long)]
+    pub amount: u64,
+    /// Role to unstake from: validator, router, compute, verifier.
+    #[arg(long)]
+    pub role: String,
+    /// RPC endpoint of a running node.
+    #[arg(long, default_value = "http://127.0.0.1:26657")]
+    pub rpc: String,
+}
+
+#[derive(Args, Debug)]
+pub struct CompleteUnbondArgs {
+    /// Unbonding ID returned by the unstake transaction.
+    #[arg(long)]
+    pub unbond_id: u64,
+    /// Role the stake was in: validator, router, compute, verifier.
+    #[arg(long)]
+    pub role: String,
+    /// RPC endpoint of a running node.
+    #[arg(long, default_value = "http://127.0.0.1:26657")]
+    pub rpc: String,
+}
+
+#[derive(Args, Debug)]
+pub struct RedelegateArgs {
+    /// Amount in ark_atom to move.
+    #[arg(long)]
+    pub amount: u64,
+    /// Role: validator, router, compute, verifier.
+    #[arg(long)]
+    pub role: String,
+    /// Destination node public key (64-char hex).
+    #[arg(long)]
+    pub to_node: String,
+    /// RPC endpoint of a running node.
+    #[arg(long, default_value = "http://127.0.0.1:26657")]
+    pub rpc: String,
+}
+
 pub async fn run(cmd: WalletCmd, data_dir: Option<&Path>) -> Result<()> {
     let root = paths::resolve(data_dir)?;
     paths::ensure_layout(&root)?;
@@ -60,6 +123,10 @@ pub async fn run(cmd: WalletCmd, data_dir: Option<&Path>) -> Result<()> {
         WalletCmd::Address(_) => show_address(&root),
         WalletCmd::Balance(args) => query_balance(&root, &args).await,
         WalletCmd::Send(args) => send_transfer(&root, &args).await,
+        WalletCmd::Stake(args) => stake(&root, &args).await,
+        WalletCmd::Unstake(args) => unstake(&root, &args).await,
+        WalletCmd::CompleteUnbond(args) => complete_unbond(&root, &args).await,
+        WalletCmd::Redelegate(args) => redelegate(&root, &args).await,
     }
 }
 
@@ -166,63 +233,37 @@ async fn query_balance(data_dir: &Path, args: &BalanceArgs) -> Result<()> {
     Ok(())
 }
 
-async fn send_transfer(data_dir: &Path, args: &SendArgs) -> Result<()> {
+/// Load wallet key material from disk. Returns (key_bytes, pubkey_32, address_20).
+pub fn load_key(data_dir: &Path) -> Result<([u8; 64], [u8; 32], [u8; 20])> {
     let key_path = paths::keys_dir(data_dir).join("node.key");
     if !key_path.exists() {
         return Err(NodeError::Paths(
             "no wallet found — run `arknet wallet create` first".into(),
         ));
     }
-
-    let key_bytes =
-        std::fs::read(&key_path).map_err(|e| NodeError::Paths(format!("read key: {e}")))?;
-    let pubkey = &key_bytes[32..64];
-    let digest = arknet_crypto::hash::blake3(pubkey);
-    let from_bytes: [u8; 20] = digest.as_bytes()[..20].try_into().unwrap();
-
-    let to_hex = args.to.strip_prefix("0x").unwrap_or(&args.to);
-    if to_hex.len() != 40 {
-        return Err(NodeError::Config(format!(
-            "recipient address must be 40 hex chars, got {}",
-            to_hex.len()
-        )));
-    }
-    let to_bytes: [u8; 20] = hex::decode(to_hex)
-        .map_err(|e| NodeError::Config(format!("bad recipient hex: {e}")))?
+    let key_bytes: [u8; 64] = std::fs::read(&key_path)
+        .map_err(|e| NodeError::Paths(format!("read key: {e}")))?
         .try_into()
-        .map_err(|_| NodeError::Config("recipient must be 20 bytes".into()))?;
+        .map_err(|v: Vec<u8>| {
+            NodeError::Paths(format!("node.key has {} bytes, expected 64", v.len()))
+        })?;
+    let mut pubkey = [0u8; 32];
+    pubkey.copy_from_slice(&key_bytes[32..64]);
+    let digest = arknet_crypto::hash::blake3(&pubkey);
+    let mut addr = [0u8; 20];
+    addr.copy_from_slice(&digest.as_bytes()[..20]);
+    Ok((key_bytes, pubkey, addr))
+}
 
-    let from = arknet_common::types::Address::new(from_bytes);
-    let to = arknet_common::types::Address::new(to_bytes);
-
-    // Query current nonce from the running node so sequential
-    // sends work. Falls back to 0 if the node is unreachable or
-    // the account doesn't exist yet.
-    let nonce = {
-        let addr_hex = hex::encode(from_bytes);
-        let url = format!("{}/v1/account/{}", args.rpc, addr_hex);
-        match reqwest::get(&url).await {
-            Ok(resp) if resp.status().is_success() => {
-                let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                body.get("nonce").and_then(|v| v.as_u64()).unwrap_or(0)
-            }
-            _ => 0,
-        }
-    };
-
-    let tx = arknet_chain::transactions::Transaction::Transfer {
-        from,
-        to,
-        amount: args.amount as u128,
-        nonce,
-        fee: args.fee,
-    };
-
+/// Sign a transaction and submit it to a node's RPC endpoint.
+pub async fn sign_and_submit(
+    key_bytes: &[u8; 64],
+    pubkey: &[u8; 32],
+    tx: arknet_chain::transactions::Transaction,
+    rpc: &str,
+) -> Result<String> {
     let tx_hash = tx.hash();
-    let mut pk_arr = [0u8; 32];
-    pk_arr.copy_from_slice(pubkey);
-    let signer = arknet_common::types::PubKey::ed25519(pk_arr);
-
+    let signer = arknet_common::types::PubKey::ed25519(*pubkey);
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes[..32].try_into().unwrap());
     let signature_bytes = {
         use ed25519_dalek::Signer;
@@ -244,7 +285,7 @@ async fn send_transfer(data_dir: &Path, args: &SendArgs) -> Result<()> {
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/v1/tx", args.rpc))
+        .post(format!("{}/v1/tx", rpc))
         .json(&serde_json::json!({ "tx_hex": tx_hex }))
         .send()
         .await
@@ -255,18 +296,176 @@ async fn send_transfer(data_dir: &Path, args: &SendArgs) -> Result<()> {
         let hash = body
             .get("tx_hash_hex")
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        println!("Transaction submitted!");
-        println!("  Hash: 0x{hash}");
-        println!("  From: 0x{}", hex::encode(from_bytes));
-        println!("  To:   0x{to_hex}");
-        println!("  Amount: {} ark_atom", args.amount);
-        println!("  Fee:    {} ark_atom", args.fee);
+            .unwrap_or("unknown")
+            .to_string();
+        Ok(hash)
     } else {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(NodeError::Config(format!("tx rejected ({status}): {body}")));
+        Err(NodeError::Config(format!("tx rejected ({status}): {body}")))
     }
+}
 
+/// Parse a role string into a StakeRole.
+fn parse_role(s: &str) -> Result<arknet_chain::transactions::StakeRole> {
+    use arknet_chain::transactions::StakeRole;
+    match s.to_lowercase().as_str() {
+        "validator" => Ok(StakeRole::Validator),
+        "router" => Ok(StakeRole::Router),
+        "compute" => Ok(StakeRole::Compute),
+        "verifier" => Ok(StakeRole::Verifier),
+        _ => Err(NodeError::Config(format!(
+            "unknown role '{s}' — use: validator, router, compute, verifier"
+        ))),
+    }
+}
+
+async fn send_transfer(data_dir: &Path, args: &SendArgs) -> Result<()> {
+    let (key_bytes, pubkey, from_bytes) = load_key(data_dir)?;
+
+    let to_hex = args.to.strip_prefix("0x").unwrap_or(&args.to);
+    if to_hex.len() != 40 {
+        return Err(NodeError::Config(format!(
+            "recipient address must be 40 hex chars, got {}",
+            to_hex.len()
+        )));
+    }
+    let to_bytes: [u8; 20] = hex::decode(to_hex)
+        .map_err(|e| NodeError::Config(format!("bad recipient hex: {e}")))?
+        .try_into()
+        .map_err(|_| NodeError::Config("recipient must be 20 bytes".into()))?;
+
+    let from = arknet_common::types::Address::new(from_bytes);
+    let to = arknet_common::types::Address::new(to_bytes);
+
+    let nonce = {
+        let addr_hex = hex::encode(from_bytes);
+        let url = format!("{}/v1/account/{}", args.rpc, addr_hex);
+        match reqwest::get(&url).await {
+            Ok(resp) if resp.status().is_success() => {
+                let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                body.get("nonce").and_then(|v| v.as_u64()).unwrap_or(0)
+            }
+            _ => 0,
+        }
+    };
+
+    let tx = arknet_chain::transactions::Transaction::Transfer {
+        from,
+        to,
+        amount: args.amount as u128,
+        nonce,
+        fee: args.fee,
+    };
+
+    let hash = sign_and_submit(&key_bytes, &pubkey, tx, &args.rpc).await?;
+    println!("Transaction submitted!");
+    println!("  Hash: 0x{hash}");
+    println!("  From: 0x{}", hex::encode(from_bytes));
+    println!("  To:   0x{to_hex}");
+    println!("  Amount: {} ark_atom", args.amount);
+    println!("  Fee:    {} ark_atom", args.fee);
+    Ok(())
+}
+
+async fn stake(data_dir: &Path, args: &StakeArgs) -> Result<()> {
+    let (key_bytes, pubkey, _addr) = load_key(data_dir)?;
+    let role = parse_role(&args.role)?;
+    let node_id = arknet_common::types::NodeId::new(pubkey);
+
+    let tx = arknet_chain::transactions::Transaction::StakeOp(
+        arknet_chain::transactions::StakeOp::Deposit {
+            node_id,
+            role,
+            pool_id: None,
+            amount: args.amount as u128,
+            delegator: None,
+        },
+    );
+
+    let hash = sign_and_submit(&key_bytes, &pubkey, tx, &args.rpc).await?;
+    println!("Stake submitted!");
+    println!("  Hash:   0x{hash}");
+    println!("  Role:   {}", args.role);
+    println!("  Amount: {} ark_atom", args.amount);
+    Ok(())
+}
+
+async fn unstake(data_dir: &Path, args: &UnstakeArgs) -> Result<()> {
+    let (key_bytes, pubkey, _addr) = load_key(data_dir)?;
+    let role = parse_role(&args.role)?;
+    let node_id = arknet_common::types::NodeId::new(pubkey);
+
+    let tx = arknet_chain::transactions::Transaction::StakeOp(
+        arknet_chain::transactions::StakeOp::Withdraw {
+            node_id,
+            role,
+            pool_id: None,
+            amount: args.amount as u128,
+        },
+    );
+
+    let hash = sign_and_submit(&key_bytes, &pubkey, tx, &args.rpc).await?;
+    println!("Unstake submitted! (14-day unbonding period starts now)");
+    println!("  Hash:   0x{hash}");
+    println!("  Role:   {}", args.role);
+    println!("  Amount: {} ark_atom", args.amount);
+    Ok(())
+}
+
+async fn complete_unbond(data_dir: &Path, args: &CompleteUnbondArgs) -> Result<()> {
+    let (key_bytes, pubkey, _addr) = load_key(data_dir)?;
+    let role = parse_role(&args.role)?;
+    let node_id = arknet_common::types::NodeId::new(pubkey);
+
+    let tx = arknet_chain::transactions::Transaction::StakeOp(
+        arknet_chain::transactions::StakeOp::Complete {
+            node_id,
+            role,
+            pool_id: None,
+            unbond_id: args.unbond_id,
+        },
+    );
+
+    let hash = sign_and_submit(&key_bytes, &pubkey, tx, &args.rpc).await?;
+    println!("Unbonding finalized!");
+    println!("  Hash:      0x{hash}");
+    println!("  Unbond ID: {}", args.unbond_id);
+    Ok(())
+}
+
+async fn redelegate(data_dir: &Path, args: &RedelegateArgs) -> Result<()> {
+    let (key_bytes, pubkey, _addr) = load_key(data_dir)?;
+    let role = parse_role(&args.role)?;
+    let from_node = arknet_common::types::NodeId::new(pubkey);
+
+    let to_hex = args.to_node.strip_prefix("0x").unwrap_or(&args.to_node);
+    if to_hex.len() != 64 {
+        return Err(NodeError::Config(format!(
+            "destination node pubkey must be 64 hex chars, got {}",
+            to_hex.len()
+        )));
+    }
+    let to_bytes: [u8; 32] = hex::decode(to_hex)
+        .map_err(|e| NodeError::Config(format!("bad node pubkey hex: {e}")))?
+        .try_into()
+        .map_err(|_| NodeError::Config("node pubkey must be 32 bytes".into()))?;
+    let to_node = arknet_common::types::NodeId::new(to_bytes);
+
+    let tx = arknet_chain::transactions::Transaction::StakeOp(
+        arknet_chain::transactions::StakeOp::Redelegate {
+            from: from_node,
+            to: to_node,
+            role,
+            amount: args.amount as u128,
+        },
+    );
+
+    let hash = sign_and_submit(&key_bytes, &pubkey, tx, &args.rpc).await?;
+    println!("Redelegation submitted! (1-day cooldown)");
+    println!("  Hash:   0x{hash}");
+    println!("  To:     0x{to_hex}");
+    println!("  Role:   {}", args.role);
+    println!("  Amount: {} ark_atom", args.amount);
     Ok(())
 }

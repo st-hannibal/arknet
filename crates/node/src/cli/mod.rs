@@ -11,6 +11,8 @@ use crate::errors::Result;
 use crate::logging::LogFormat;
 
 pub mod config_cmd;
+pub mod gateway;
+pub mod governance;
 pub mod health;
 pub mod init;
 pub mod model_cmd;
@@ -94,6 +96,15 @@ pub enum Command {
     /// TEE — manage enclave keys and register TEE capability.
     #[command(subcommand)]
     Tee(tee::TeeCmd),
+
+    /// Gateway — register/unregister as a public gateway.
+    #[command(subcommand)]
+    Gateway(gateway::GatewayCmd),
+
+    /// Governance — submit proposals and vote.
+    #[command(subcommand)]
+    #[command(alias = "gov")]
+    Governance(governance::GovernanceCmd),
 }
 
 /// Dispatch a parsed [`Cli`] to the matching handler.
@@ -107,5 +118,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::Model(cmd) => model_cmd::run(cmd, cli.data_dir.as_deref()).await,
         Command::Wallet(cmd) => wallet::run(cmd, cli.data_dir.as_deref()).await,
         Command::Tee(cmd) => tee::run(cmd, cli.data_dir.as_deref()).await,
+        Command::Gateway(cmd) => gateway::run(cmd, cli.data_dir.as_deref()).await,
+        Command::Governance(cmd) => governance::run(cmd, cli.data_dir.as_deref()).await,
     }
 }
