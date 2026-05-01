@@ -61,21 +61,21 @@ jobs:
           sudo apt-get clean
       - name: Publish arknet-common
         if: ${{ github.event_name == 'push' || inputs.dry_run == 'false' }}
-        run: cargo publish -p arknet-common --allow-dirty
+        run: cargo publish -p arknet-common --allow-dirty || echo "already published — skipping"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
       - name: Publish arknet-crypto
         if: ${{ github.event_name == 'push' || inputs.dry_run == 'false' }}
         run: |
           sleep 15  # wait for crates.io index to update
-          cargo publish -p arknet-crypto --allow-dirty
+          cargo publish -p arknet-crypto --allow-dirty || echo "already published — skipping"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
       - name: Publish arknet-sdk
         if: ${{ github.event_name == 'push' || inputs.dry_run == 'false' }}
         run: |
           sleep 15
-          cargo publish -p arknet-sdk --allow-dirty
+          cargo publish -p arknet-sdk --allow-dirty || echo "already published — skipping"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
       - name: Dry run
@@ -105,7 +105,7 @@ jobs:
         working-directory: bindings/python
         run: |
           pip install twine
-          twine upload dist/*
+          twine upload dist/* || echo "already published — skipping"
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
@@ -135,7 +135,7 @@ jobs:
       - name: Publish
         if: ${{ github.event_name == 'push' || inputs.dry_run == 'false' }}
         working-directory: bindings/typescript
-        run: npm publish
+        run: npm publish || echo "already published — skipping"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Dry run

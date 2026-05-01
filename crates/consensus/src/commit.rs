@@ -196,6 +196,11 @@ pub fn commit_block(
     let committed_root = ctx.commit()?;
     debug_assert_eq!(committed_root, replayed_root);
 
+    // Persist the full block for the /v1/block/:height query endpoint.
+    if let Err(e) = state.store_block(block.header.height, block) {
+        tracing::warn!(error = %e, height = block.header.height, "failed to persist block");
+    }
+
     // Emit Phase-1 metrics for the committed block.
     metrics::gauge!("arknet_consensus_height").set(block.header.height as f64);
     let mut receipts_count: u64 = 0;

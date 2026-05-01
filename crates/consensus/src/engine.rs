@@ -226,6 +226,20 @@ impl ConsensusHandle {
             .map_err(|e| format!("iter_gateways: {e}"))
     }
 
+    /// Retrieve a committed block by height (direct RocksDB read, no channel).
+    pub fn get_block(&self, height: u64) -> std::result::Result<Option<Block>, String> {
+        self.chain_state
+            .get_block(height)
+            .map_err(|e| format!("get_block: {e}"))
+    }
+
+    /// Look up which block height a transaction landed in (direct RocksDB read).
+    pub fn get_tx_height(&self, tx_hash: &[u8; 32]) -> std::result::Result<Option<u64>, String> {
+        self.chain_state
+            .get_tx_height(tx_hash)
+            .map_err(|e| format!("get_tx_height: {e}"))
+    }
+
     /// Subscribe to finalized blocks. Returns the next block as `Arc` so
     /// multiple subscribers can reference the same allocation.
     pub async fn next_finalized_block(&self) -> std::result::Result<Arc<Block>, String> {
@@ -327,8 +341,13 @@ async fn run(
     ));
 
     loop {
-        // Drain the pending inputs queue before waiting for I/O.
-        while let Some(input) = pending_inputs.pop_front() {
+        // Drain the current batch of pending inputs, but limit iterations
+        // so the select! loop gets a chance to poll commands and network.
+        let batch_size = pending_inputs.len();
+        for _ in 0..batch_size {
+            let Some(input) = pending_inputs.pop_front() else {
+                break;
+            };
             debug!(?input, "feeding input to state machine");
             let follow_ups = drive_one_input(
                 &mut state,
@@ -350,6 +369,24 @@ async fn run(
             )
             .await?;
             pending_inputs.extend(follow_ups);
+        }
+
+        // If there are still pending inputs, drain commands non-blocking
+        // before processing them — this prevents starvation of the command
+        // channel when consensus runs in a tight loop (e.g. single validator).
+        if !pending_inputs.is_empty() {
+            while let Ok(cmd) = cmd_rx.try_recv() {
+                match cmd {
+                    Command::SubmitTx { tx, reply } => {
+                        let r = mempool.lock().insert(*tx).map_err(|e| e.to_string());
+                        let _ = reply.send(r);
+                    }
+                    Command::CurrentHeight { reply } => {
+                        let _ = reply.send(current_height);
+                    }
+                }
+            }
+            continue;
         }
 
         // Compute the next timeout deadline.
