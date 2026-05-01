@@ -327,8 +327,13 @@ async fn run(
     ));
 
     loop {
-        // Drain the pending inputs queue before waiting for I/O.
-        while let Some(input) = pending_inputs.pop_front() {
+        // Drain the current batch of pending inputs, but limit iterations
+        // so the select! loop gets a chance to poll commands and network.
+        let batch_size = pending_inputs.len();
+        for _ in 0..batch_size {
+            let Some(input) = pending_inputs.pop_front() else {
+                break;
+            };
             debug!(?input, "feeding input to state machine");
             let follow_ups = drive_one_input(
                 &mut state,
@@ -350,6 +355,24 @@ async fn run(
             )
             .await?;
             pending_inputs.extend(follow_ups);
+        }
+
+        // If there are still pending inputs, drain commands non-blocking
+        // before processing them — this prevents starvation of the command
+        // channel when consensus runs in a tight loop (e.g. single validator).
+        if !pending_inputs.is_empty() {
+            while let Ok(cmd) = cmd_rx.try_recv() {
+                match cmd {
+                    Command::SubmitTx { tx, reply } => {
+                        let r = mempool.lock().insert(*tx).map_err(|e| e.to_string());
+                        let _ = reply.send(r);
+                    }
+                    Command::CurrentHeight { reply } => {
+                        let _ = reply.send(current_height);
+                    }
+                }
+            }
+            continue;
         }
 
         // Compute the next timeout deadline.
