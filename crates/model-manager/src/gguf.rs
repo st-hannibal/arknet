@@ -30,8 +30,9 @@ const SUPPORTED_VERSION: u32 = 3;
 /// Hard cap on any single metadata string. Real-world values are < 1 KB.
 const MAX_STRING_LEN: u64 = 64 * 1024;
 
-/// Hard cap on metadata KV count. Real-world values are < 1024.
-const MAX_METADATA_ENTRIES: u64 = 16 * 1024;
+/// Hard cap on metadata KV count and array lengths. Modern tokenizer
+/// vocab arrays (e.g. Qwen3) can have 150K+ entries.
+const MAX_METADATA_ENTRIES: u64 = 256 * 1024;
 
 /// How many header bytes to pull off disk before parsing. Enough for
 /// every realistic header we have seen; if a model exceeds this we
