@@ -244,7 +244,9 @@ pub fn load_key(data_dir: &Path) -> Result<([u8; 64], [u8; 32], [u8; 20])> {
     let key_bytes: [u8; 64] = std::fs::read(&key_path)
         .map_err(|e| NodeError::Paths(format!("read key: {e}")))?
         .try_into()
-        .map_err(|v: Vec<u8>| NodeError::Paths(format!("node.key has {} bytes, expected 64", v.len())))?;
+        .map_err(|v: Vec<u8>| {
+            NodeError::Paths(format!("node.key has {} bytes, expected 64", v.len()))
+        })?;
     let mut pubkey = [0u8; 32];
     pubkey.copy_from_slice(&key_bytes[32..64]);
     let digest = arknet_crypto::hash::blake3(&pubkey);
