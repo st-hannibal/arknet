@@ -226,6 +226,14 @@ impl ConsensusHandle {
             .map_err(|e| format!("iter_gateways: {e}"))
     }
 
+    /// Number of active validators in the current chain state.
+    pub fn validator_count(&self) -> u32 {
+        self.chain_state
+            .iter_validators()
+            .map(|v| v.len() as u32)
+            .unwrap_or(1)
+    }
+
     /// Retrieve a committed block by height (direct RocksDB read, no channel).
     pub fn get_block(&self, height: u64) -> std::result::Result<Option<Block>, String> {
         self.chain_state

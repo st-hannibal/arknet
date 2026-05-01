@@ -92,6 +92,7 @@ pub async fn serve(bind: SocketAddr, state: RpcState, shutdown: CancellationToke
         .route("/v1/status", get(status))
         .route("/v1/account/:address", get(get_account))
         .route("/v1/tx", post(submit_tx))
+        .route("/v1/bootstrap", get(bootstrap_status))
         .route("/v1/candidates/:model", get(list_candidates))
         .route("/v1/gateways", get(list_gateways))
         .route("/v1/block/:height", get(get_block))
@@ -784,6 +785,35 @@ async fn submit_tx(
         })),
         Err(msg) => Err((StatusCode::BAD_REQUEST, Json(ErrorBody { error: msg }))),
     }
+}
+
+// ─── /v1/bootstrap ──────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct BootstrapResponse {
+    active: bool,
+    height: u64,
+    validator_count: u32,
+}
+
+async fn bootstrap_status(State(state): State<RpcState>) -> Json<BootstrapResponse> {
+    let height = if let Some(consensus) = state.runtime.consensus.as_ref() {
+        consensus.current_height().await.map(|h| h.0).unwrap_or(0)
+    } else {
+        0
+    };
+    let validator_count = state
+        .runtime
+        .consensus
+        .as_ref()
+        .map(|c| c.validator_count())
+        .unwrap_or(1);
+    let active = arknet_chain::bootstrap::in_bootstrap_epoch(height, validator_count);
+    Json(BootstrapResponse {
+        active,
+        height,
+        validator_count,
+    })
 }
 
 // ─── /v1/candidates/:model ───────────────────────────────────────

@@ -476,6 +476,7 @@ dependencies = [
 name = "arknet-sdk"
 version = "1.0.7"
 dependencies = [
+ "arknet-chain",
  "arknet-common",
  "arknet-compute",
  "arknet-crypto",

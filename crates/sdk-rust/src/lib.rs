@@ -258,14 +258,29 @@ impl Client {
         let encoded = borsh::to_vec(&job_req)
             .map_err(|e| SdkError::Wire(format!("failed to encode request: {e}")))?;
 
-        // 3. Balance check. During bootstrap (free tier), the compute node
-        // enforces per-wallet quota (10/hr, 100/day). Post-bootstrap,
-        // this will also submit an EscrowLock tx to lock ARK on-chain
-        // before inference.
-        let balance = self.get_balance().await.unwrap_or(0);
-        if balance > 0 {
-            // User has ARK — will use paid path once escrow is wired.
-            // For now, proceed with free tier.
+        // 3. Bootstrap check + escrow. During bootstrap, inference is free
+        // (per-wallet quota: 10/hr, 100/day). Post-bootstrap, the SDK
+        // checks balance and submits an EscrowLock tx before inference.
+        let bootstrap = self.check_bootstrap().await.unwrap_or(true);
+        if !bootstrap {
+            let balance = self.get_balance().await?;
+            // TODO: query pricing oracle for exact cost. For now use a
+            // flat estimate of 10_000 ark_atom per request.
+            let cost: u128 = 10_000;
+            if balance < cost {
+                return Err(SdkError::Api {
+                    status: 402,
+                    body: format!(
+                        "insufficient balance: have {} ark_atom, need {} ark_atom. \
+                         Fund your wallet: 0x{}",
+                        balance,
+                        cost,
+                        hex::encode(w.address().as_bytes())
+                    ),
+                });
+            }
+            // Submit EscrowLock transaction to the chain.
+            self.submit_escrow_lock(&job_req, cost).await?;
         }
 
         // 4. Try each candidate until one succeeds.
@@ -367,6 +382,85 @@ impl Client {
             .await
             .map_err(|e| SdkError::Http(format!("balance parse: {e}")))?;
         Ok(body["balance"].as_u64().unwrap_or(0) as u128)
+    }
+
+    /// Check whether the chain is still in bootstrap (free inference).
+    /// Returns `true` during bootstrap, `false` after.
+    async fn check_bootstrap(&self) -> Result<bool> {
+        let url = format!("{}/v1/bootstrap", self.base_url);
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| SdkError::Http(format!("bootstrap check: {e}")))?;
+        if !resp.status().is_success() {
+            return Ok(true);
+        }
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| SdkError::Http(format!("bootstrap parse: {e}")))?;
+        Ok(body["active"].as_bool().unwrap_or(true))
+    }
+
+    /// Submit an EscrowLock transaction to the chain. Blocks until the
+    /// tx is accepted into the mempool (not until it's finalized).
+    async fn submit_escrow_lock(
+        &self,
+        job_req: &arknet_compute::wire::InferenceJobRequest,
+        amount: u128,
+    ) -> Result<()> {
+        let w = self.wallet.as_ref().ok_or(SdkError::NoWallet)?;
+        let job_id = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(b"arknet-job-id-v1");
+            hasher.update(&job_req.derived_user_address().0);
+            hasher.update(&job_req.nonce.to_le_bytes());
+            hasher.update(&job_req.timestamp_ms.to_le_bytes());
+            let digest = hasher.finalize();
+            let mut out = [0u8; 32];
+            out.copy_from_slice(digest.as_bytes());
+            arknet_common::types::JobId::new(out)
+        };
+
+        let tx = arknet_chain::transactions::Transaction::EscrowLock {
+            from: job_req.derived_user_address(),
+            job_id,
+            amount,
+            nonce: job_req.nonce,
+            fee: 21_000,
+        };
+        let tx_bytes =
+            borsh::to_vec(&tx).map_err(|e| SdkError::Wire(format!("escrow tx encode: {e}")))?;
+        let sig = w.sign(&tx_bytes);
+        let signed = arknet_chain::transactions::SignedTransaction {
+            tx,
+            signer: w.public_key(),
+            signature: sig,
+        };
+        let signed_bytes =
+            borsh::to_vec(&signed).map_err(|e| SdkError::Wire(format!("signed tx encode: {e}")))?;
+
+        let url = format!("{}/v1/tx", self.base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .header("Content-Type", "application/octet-stream")
+            .body(signed_bytes)
+            .send()
+            .await
+            .map_err(|e| SdkError::Http(format!("escrow submit: {e}")))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SdkError::Api {
+                status: status.as_u16(),
+                body,
+            });
+        }
+        Ok(())
     }
 }
 
