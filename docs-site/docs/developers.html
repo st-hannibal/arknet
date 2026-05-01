@@ -156,10 +156,21 @@ response = client.chat.completions.create(
 )</pre>
 
 <h2>On-chain transactions</h2>
-<p>Submit borsh-encoded signed transactions via <code>/v1/tx</code>:</p>
-<pre>curl -X POST http://localhost:26657/v1/tx \
-  -H "Content-Type: application/json" \
-  -d '{"tx_hex": "0a1b..."}'</pre>
+<p>Use the CLI for all on-chain actions — no raw hex needed:</p>
+<pre># Staking
+arknet wallet stake --role compute --amount 50000000000000
+arknet wallet unstake --role compute --amount 50000000000000
+arknet wallet complete-unbond --role compute --unbond-id 1
+arknet wallet redelegate --role compute --to-node 0x... --amount 50000000000000
+
+# Gateway registration
+arknet gateway register --url https://rpc.mynode.com --https
+arknet gateway unregister
+
+# Governance
+arknet governance propose --title "Add new model" --body @proposal.md
+arknet governance vote --proposal 1 --choice yes</pre>
+<p>Under the hood, the CLI builds a borsh-encoded <code>SignedTransaction</code>, signs it with your wallet key, and submits it to <code>/v1/tx</code> on your local node.</p>
 
 <h3>Transaction types</h3>
 <table>
