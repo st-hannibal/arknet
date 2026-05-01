@@ -56,7 +56,7 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
 
     // Boot the P2P network first so the runtime's RPC layer can
     // reference the handle when answering `/peers`.
-    let (network_handle, network_join) = network_boot::start_network(
+    let (network_handle, inference_channels, network_join) = network_boot::start_network(
         &root,
         &cfg.node,
         &cfg.network,
@@ -82,16 +82,26 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
         None
     };
 
-    // Attach L2 handles based on the selected role. A node can play
-    // multiple roles simultaneously in Phase 2; Phase 1 runs one role
-    // per `arknet start` invocation, but we still wire the L2 pair up
-    // coherently so integration tests can compose them in-process.
-    if role == Role::Router {
-        rt = rt.with_router(router_role::build_router());
+    let mut inference_requests = None;
+
+    // Validators and routers need a Router to forward inference requests
+    // to remote compute nodes. Wire up pool_offer gossip ingestion.
+    if role == Role::Router || role == Role::Validator {
+        let router = router_role::build_router();
+        let response_rx =
+            std::sync::Arc::new(tokio::sync::Mutex::new(inference_channels.responses));
+        router_role::start_gossip_listener(
+            network_handle.clone(),
+            router.registry().clone(),
+            response_rx,
+            token.clone(),
+        );
+        rt = rt.with_router(router);
     }
     if role == Role::Compute {
         let runner = arknet_compute::ComputeJobRunner::new(rt.inference.clone());
         rt = rt.with_compute(runner);
+        inference_requests = Some(inference_channels.requests);
     }
 
     // Launch /metrics in the background — it shuts itself down when
@@ -123,7 +133,7 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
 
     // Drive the role. When it exits, request shutdown so the servers
     // come down with it.
-    let role_result = scheduler::run(role, rt, token.clone()).await;
+    let role_result = scheduler::run(role, rt, inference_requests, token.clone()).await;
     token.cancel();
 
     if let Err(e) = metrics_handle.await? {

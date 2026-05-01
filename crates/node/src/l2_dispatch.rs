@@ -25,6 +25,7 @@ use arknet_compute::{
     ComputeJobRunner,
 };
 use arknet_model_manager::ModelRef;
+use arknet_network::{InferenceResponseEvent, NetworkHandle, PeerId};
 use arknet_router::candidate::InferenceDispatcher;
 use arknet_router::errors::{Result as RouterResult, RouterError};
 use async_trait::async_trait;
@@ -102,6 +103,79 @@ impl InferenceDispatcher for LocalComputeDispatcher {
                 .await;
         });
         Ok(ReceiverStream::new(rx))
+    }
+}
+
+/// [`InferenceDispatcher`] that forwards requests to a remote compute
+/// node over the `/arknet/inference/1` p2p protocol.
+pub struct RemoteComputeDispatcher {
+    network: NetworkHandle,
+    peer_id: PeerId,
+    response_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<InferenceResponseEvent>>>,
+}
+
+impl RemoteComputeDispatcher {
+    /// Build a dispatcher targeting `peer_id`. `response_rx` is the
+    /// inference response channel from [`arknet_network::InferenceChannels`].
+    pub fn new(
+        network: NetworkHandle,
+        peer_id: PeerId,
+        response_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<InferenceResponseEvent>>>,
+    ) -> Self {
+        Self {
+            network,
+            peer_id,
+            response_rx,
+        }
+    }
+}
+
+#[async_trait]
+impl InferenceDispatcher for RemoteComputeDispatcher {
+    async fn dispatch(
+        &self,
+        req: InferenceJobRequest,
+    ) -> RouterResult<ReceiverStream<InferenceJobEvent>> {
+        let wire_req =
+            borsh::to_vec(&req).map_err(|e| RouterError::Dispatch(format!("encode: {e}")))?;
+
+        let outbound_id = self
+            .network
+            .send_inference_request(self.peer_id, wire_req)
+            .await
+            .map_err(|e| RouterError::Dispatch(format!("send: {e}")))?;
+
+        let mut rx = self.response_rx.lock().await;
+        let resp = loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(300), rx.recv()).await {
+                Ok(Some(ev)) if ev.request_id == outbound_id => break ev,
+                Ok(Some(_)) => continue,
+                Ok(None) => {
+                    return Err(RouterError::Dispatch("response channel closed".into()));
+                }
+                Err(_) => {
+                    return Err(RouterError::Dispatch("inference request timed out".into()));
+                }
+            }
+        };
+        drop(rx);
+
+        let wire_resp = resp
+            .result
+            .map_err(|e| RouterError::Dispatch(format!("remote error: {e}")))?;
+
+        let inference_resp: arknet_network::InferenceResponse = borsh::from_slice(&wire_resp)
+            .map_err(|e| RouterError::Dispatch(format!("decode response: {e}")))?;
+
+        let (tx, out_rx) = mpsc::channel::<InferenceJobEvent>(64);
+        for raw_event in inference_resp.events {
+            let event: InferenceJobEvent = borsh::from_slice(&raw_event)
+                .map_err(|e| RouterError::Dispatch(format!("decode event: {e}")))?;
+            let _ = tx.send(event).await;
+        }
+        drop(tx);
+
+        Ok(ReceiverStream::new(out_rx))
     }
 }
 

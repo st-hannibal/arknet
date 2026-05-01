@@ -49,9 +49,12 @@ pub use inference_proto::{
     build_inference_behaviour, InferenceBehaviour, InferenceCodec, InferenceResponse, WireRequest,
     WireResponse, INFERENCE_PROTOCOL, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
 };
-pub use network::{default_topics, Network, NetworkEvent, NetworkHandle};
+pub use network::{
+    default_topics, InboundInferenceRequest, InferenceChannels, InferenceResponseEvent, Network,
+    NetworkEvent, NetworkHandle,
+};
 pub use peer::{PeerBook, PeerRecord};
 
 // Re-export the core libp2p types a caller needs without forcing them
 // to add libp2p as a direct dependency.
-pub use libp2p::{identity, identity::Keypair, Multiaddr, PeerId};
+pub use libp2p::{identity, identity::Keypair, request_response, Multiaddr, PeerId};

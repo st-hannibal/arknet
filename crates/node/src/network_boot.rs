@@ -11,8 +11,8 @@ use std::path::Path;
 
 use arknet_common::config::{NetworkSection, NodeSection};
 use arknet_network::{
-    parse_multiaddrs, HandshakeInfo, Keypair, Network, NetworkConfig, NetworkHandle, PeerRoles,
-    HANDSHAKE_VERSION,
+    parse_multiaddrs, HandshakeInfo, InferenceChannels, Keypair, Network, NetworkConfig,
+    NetworkHandle, PeerRoles, HANDSHAKE_VERSION,
 };
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -34,7 +34,11 @@ pub async fn start_network(
     roles: &arknet_common::config::RolesSection,
     keypair: Keypair,
     shutdown: CancellationToken,
-) -> Result<(NetworkHandle, JoinHandle<arknet_network::Result<()>>)> {
+) -> Result<(
+    NetworkHandle,
+    InferenceChannels,
+    JoinHandle<arknet_network::Result<()>>,
+)> {
     let listen_addrs = net_listen_addrs(net)?;
     let bootstrap = parse_multiaddrs(&net.bootstrap_peers)
         .map_err(|e| NodeError::Config(format!("bootstrap_peers: {e}")))?;
@@ -75,11 +79,11 @@ pub async fn start_network(
         "booting p2p network"
     );
 
-    let (handle, join) = Network::start(config, keypair, handshake, shutdown)
+    let (handle, inference_channels, join) = Network::start(config, keypair, handshake, shutdown)
         .await
         .map_err(NodeError::from)?;
 
-    Ok((handle, join))
+    Ok((handle, inference_channels, join))
 }
 
 /// Translate the operator-facing `p2p_listen` (host:port string) into a
