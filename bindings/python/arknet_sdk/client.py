@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -27,7 +28,7 @@ class Client:
 
     def __init__(self, base_url: str, api_key: Optional[str] = None) -> None:
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+        self.api_key = api_key or os.environ.get("ARKNET_WALLET")
 
     @classmethod
     def connect(

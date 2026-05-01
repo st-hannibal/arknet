@@ -100,7 +100,7 @@ export class ArknetClient {
 
   constructor(baseUrl: string, apiKey?: string) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
-    this.apiKey = apiKey;
+    this.apiKey = apiKey ?? (typeof process !== "undefined" ? process.env.ARKNET_WALLET : undefined);
   }
 
   /**

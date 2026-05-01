@@ -111,7 +111,7 @@ tower        = "0.4"
 tower-http   = { version = "0.5", features = ["cors", "trace"] }
 tonic        = "0.12"
 prost        = "0.13"
-reqwest      = { version = "0.12", features = ["stream", "rustls-tls"] }
+reqwest      = { version = "0.12", features = ["stream", "rustls-tls", "json"] }
 
 # P2P
 libp2p       = { version = "=0.54.1", features = ["tcp", "quic", "noise", "yamux", "gossipsub", "kad", "identify", "ping", "request-response", "tokio", "macros"] }
