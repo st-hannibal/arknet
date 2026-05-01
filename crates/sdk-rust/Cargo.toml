@@ -8,10 +8,23 @@ repository    = { workspace = true }
 description   = "Public Rust SDK for building applications on arknet."
 
 [dependencies]
-arknet-common = { workspace = true }
-arknet-crypto = { workspace = true }
-tokio         = { workspace = true }
-reqwest       = { workspace = true }
-serde         = { workspace = true }
-serde_json    = { workspace = true }
-thiserror     = { workspace = true }
+arknet-common  = { workspace = true }
+arknet-crypto  = { workspace = true }
+arknet-network = { workspace = true }
+arknet-compute = { workspace = true }
+tokio          = { workspace = true }
+futures        = { workspace = true }
+reqwest        = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
+borsh          = { workspace = true }
+blake3         = { workspace = true }
+libp2p         = { workspace = true }
+zeroize        = { workspace = true }
+dirs-next      = "2.0"
+urlencoding    = "2.1"
+
+[dev-dependencies]
+tempfile       = "3.10"
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

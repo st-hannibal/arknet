@@ -1,0 +1,20 @@
+[package]
+name          = "arknet-sdk-python"
+version       = "1.0.7"
+edition       = "2021"
+rust-version  = "1.86"
+license       = "Apache-2.0"
+description   = "Python bindings for the arknet Rust SDK (PyO3/maturin)."
+publish       = false
+
+[lib]
+name        = "arknet_sdk"
+crate-type  = ["cdylib"]
+
+[dependencies]
+arknet-sdk    = { path = "../../crates/sdk-rust" }
+arknet-common = { path = "../../crates/common" }
+pyo3          = { version = "0.22", features = ["extension-module"] }
+tokio         = { version = "1.38", features = ["full"] }
+serde_json    = "1.0"
+hex           = "0.4"

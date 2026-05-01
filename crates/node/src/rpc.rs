@@ -5,6 +5,7 @@
 //! - `POST /v1/inference` — Phase 0 internal format (SSE InferenceEvent blobs).
 //! - `GET  /v1/models` — list loaded model handles.
 //! - `POST /v1/models/load` — load a model by manifest.
+//! - `GET  /v1/candidates/:model` — compute-node discovery for SDK direct p2p.
 //! - `GET  /health` — JSON `{ "status": "ok", ... }`.
 //! - `GET  /v1/status` — chain status.
 //! - `POST /v1/tx` — submit a signed transaction.
@@ -91,6 +92,7 @@ pub async fn serve(bind: SocketAddr, state: RpcState, shutdown: CancellationToke
         .route("/v1/status", get(status))
         .route("/v1/account/:address", get(get_account))
         .route("/v1/tx", post(submit_tx))
+        .route("/v1/candidates/:model", get(list_candidates))
         .route("/v1/gateways", get(list_gateways))
         .route("/v1/block/:height", get(get_block))
         .route("/v1/tx/:hash", get(get_tx))
@@ -272,21 +274,11 @@ async fn chat_completions(
         (status, Json(serde_json::to_value(body.0).unwrap()))
     })?;
 
-    // Try routing through the Router if one is attached and has
-    // candidates for this model (remote compute nodes).
-    if let Some(router) = state.runtime.router.as_ref() {
-        let now = arknet_router::failover::now_ms();
-        let candidates = router.registry().eligible_for(&model_ref.to_string(), now);
-        if !candidates.is_empty() {
-            return route_via_router(router, &req, &model_ref).await;
-        }
-    }
-
-    // Local fallback: load model on this node and run inference.
+    // Local inference: load model on this node and run inference.
     let manifest = state.manifest_for(&model_ref).ok_or_else(|| {
         let (status, body) = error_response(
             StatusCode::NOT_FOUND,
-            format!("model not loaded: {model_ref}. No remote compute nodes available either.",),
+            format!("model not loaded: {model_ref}. POST /v1/models/load first.",),
             "model_not_found",
         );
         (status, Json(serde_json::to_value(body.0).unwrap()))
@@ -632,120 +624,6 @@ struct ErrorBody {
     error: String,
 }
 
-/// Route an inference request through the Router to a remote compute node.
-async fn route_via_router(
-    router: &arknet_router::Router,
-    req: &arknet_rpc::openai::ChatCompletionRequest,
-    model_ref: &ModelRef,
-) -> std::result::Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
-    use arknet_compute::wire::{InferenceJobEvent, InferenceJobRequest};
-    use arknet_rpc::openai::*;
-
-    let prompt = req
-        .messages
-        .iter()
-        .map(|m| format!("{}: {}", m.role, m.content))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let job_req = InferenceJobRequest {
-        model_ref: model_ref.to_string(),
-        model_hash: [0u8; 32],
-        prompt,
-        max_tokens: req.max_tokens,
-        seed: 0,
-        deterministic: false,
-        stop_strings: req
-            .stop
-            .as_ref()
-            .map(|s| s.clone().into_vec())
-            .unwrap_or_default(),
-        nonce: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0),
-        timestamp_ms: arknet_router::failover::now_ms(),
-        user_pubkey: arknet_common::types::PubKey::ed25519([0u8; 32]),
-        signature: arknet_common::types::Signature::ed25519([0u8; 64]),
-        prefer_tee: req.prefer_tee,
-        encrypted_prompt: None,
-    };
-
-    let (_job_id, mut stream) = router
-        .accept(
-            job_req,
-            arknet_router::failover::now_ms(),
-            arknet_router::intake::QuotaPolicy::Skip,
-        )
-        .await
-        .map_err(|e| {
-            let (status, body) = error_response(
-                StatusCode::BAD_GATEWAY,
-                format!("router dispatch failed: {e}"),
-                "routing_error",
-            );
-            (status, Json(serde_json::to_value(body.0).unwrap()))
-        })?;
-
-    let mut tokens = Vec::new();
-    let mut finish_reason = "length".to_string();
-    while let Some(event) = stream.next().await {
-        match event {
-            InferenceJobEvent::Token { text, .. } => tokens.push(text),
-            InferenceJobEvent::Stop { reason, .. } => {
-                finish_reason = match reason {
-                    arknet_compute::wire::StopKind::MaxTokens => "length",
-                    arknet_compute::wire::StopKind::EndOfStream => "stop",
-                    arknet_compute::wire::StopKind::StopString(_) => "stop",
-                    arknet_compute::wire::StopKind::Cancelled => "length",
-                }
-                .into();
-                break;
-            }
-            InferenceJobEvent::Error { message, .. } => {
-                let (status, body) = error_response(
-                    StatusCode::BAD_GATEWAY,
-                    format!("compute error: {message}"),
-                    "compute_error",
-                );
-                return Err((status, Json(serde_json::to_value(body.0).unwrap())));
-            }
-        }
-    }
-
-    let content = tokens.join("");
-    let total_tokens = tokens.len() as u32;
-    let resp = ChatCompletionResponse {
-        id: format!(
-            "chatcmpl-{:016x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0)
-        ),
-        object: "chat.completion",
-        created: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-        model: model_ref.to_string(),
-        choices: vec![Choice {
-            index: 0,
-            message: ChatMessage {
-                role: "assistant".into(),
-                content,
-            },
-            finish_reason: Some(finish_reason),
-        }],
-        usage: Usage {
-            prompt_tokens: 0,
-            completion_tokens: total_tokens,
-            total_tokens,
-        },
-    };
-    Ok(Json(resp).into_response())
-}
-
 fn http_error(e: NodeError) -> (StatusCode, Json<ErrorBody>) {
     let status = match &e {
         NodeError::ModelRef(_) => StatusCode::BAD_REQUEST,
@@ -906,6 +784,57 @@ async fn submit_tx(
         })),
         Err(msg) => Err((StatusCode::BAD_REQUEST, Json(ErrorBody { error: msg }))),
     }
+}
+
+// ─── /v1/candidates/:model ───────────────────────────────────────
+
+/// One candidate compute node returned by the discovery endpoint.
+#[derive(Serialize)]
+struct CandidateEntry {
+    /// Hex-encoded node id (or libp2p peer-id when available).
+    peer_id: String,
+    /// Known multiaddresses. Empty until the peer-book maps ids to addrs.
+    multiaddrs: Vec<String>,
+}
+
+/// Response for `GET /v1/candidates/:model`.
+#[derive(Serialize)]
+struct CandidatesResponse {
+    candidates: Vec<CandidateEntry>,
+}
+
+/// Return the peer ids of compute nodes serving a given model.
+///
+/// The SDK uses this to discover nodes and connect via p2p directly.
+async fn list_candidates(
+    State(state): State<RpcState>,
+    axum::extract::Path(model): axum::extract::Path<String>,
+) -> std::result::Result<Json<CandidatesResponse>, (StatusCode, Json<ErrorBody>)> {
+    let router = state.runtime.router.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                error: "no router role active on this node".into(),
+            }),
+        )
+    })?;
+
+    let now = arknet_router::failover::now_ms();
+    let candidates = router.registry().eligible_for(&model, now);
+
+    let entries: Vec<CandidateEntry> = candidates
+        .into_iter()
+        .map(|c| CandidateEntry {
+            peer_id: format!("{}", c.node_id),
+            // TODO(phase-2): resolve node_id → multiaddr from the
+            // network peer-book once the mapping is available.
+            multiaddrs: Vec::new(),
+        })
+        .collect();
+
+    Ok(Json(CandidatesResponse {
+        candidates: entries,
+    }))
 }
 
 // ─── /v1/gateways ────────────────────────────────────────────────
