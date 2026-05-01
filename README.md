@@ -13,42 +13,50 @@
 
 ---
 
-Anyone with a computer earns **ARK** for serving AI models. Any developer queries AI through an OpenAI-compatible API — change one line, get decentralized inference.
+Anyone with a computer earns **ARK** for serving AI models. Any developer queries AI through a familiar API — install the SDK, connect, done.
 
-**Via the decentralized network** (auto-discovers gateways):
+**Use the network** (3 lines — the SDK finds nodes automatically):
+```bash
+pip install arknet
+```
 ```python
 from arknet import Client
 
-# SDK discovers gateways from the on-chain registry — no hardcoded URL
-client = Client.connect()
+client = Client.connect()    # discovers nodes from the on-chain registry
 response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )
 ```
 
-Or with any OpenAI-compatible client (point at any public gateway):
-```python
-from openai import OpenAI
+No URLs to configure, no gateway to find — the SDK reads the blockchain's gateway registry and connects to the best available node. HTTPS preferred, TEE-capable nodes prioritized when you ask for confidential inference.
 
-client = OpenAI(base_url="https://any-gateway.example.com/v1", api_key="ark1..."  # your wallet address)
-response = client.chat.completions.create(
+**Run locally** (free, offline, your hardware):
+```python
+from arknet import Client
+
+client = Client("http://localhost:26657")    # your own node
+response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )
 ```
 
-**Via your own local node** (free, no network, runs on your hardware):
+<details>
+<summary>Advanced: using the raw OpenAI SDK (no arknet SDK needed)</summary>
+
+If you already have an OpenAI integration and don't want to install the arknet SDK, point the OpenAI client at any arknet node directly. You'll need to know a node's URL — find one via `/v1/gateways` on any running node, or run your own.
+
 ```python
 from openai import OpenAI
 
-# Point at your own node — inference runs locally, no wallet needed
 client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
 response = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )
 ```
+</details>
 
 ## How it works
 
@@ -79,15 +87,19 @@ Users never interact with the blockchain directly — the OpenAI API is the inte
 
 ### As a user/developer (no node required)
 
-Use the arknet SDK to auto-discover gateways, or point any OpenAI client at any public gateway. The network handles routing, payment, and verification. During the bootstrap period (first 6 months), inference is **free** — the network subsidizes early usage through block emission.
+Install the SDK and connect. The network handles node discovery, routing, payment, and verification — you never need to know any server URLs. During the bootstrap period (first 6 months), inference is **free**.
 
+```bash
+pip install arknet    # or: npm install arknet-sdk / cargo add arknet-sdk
+```
 ```python
-# arknet SDK — auto-discovers gateways from the on-chain registry
 from arknet import Client
-client = Client.connect()
 
-# Or use any OpenAI client — point at any gateway you find via /v1/gateways
-client = OpenAI(base_url="https://any-gateway.example.com/v1", api_key="ark1..."  # your wallet address)
+client = Client.connect()    # auto-discovers nodes from the blockchain
+response = client.chat_completion(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[{"role": "user", "content": "Hello from arknet"}],
+)
 ```
 
 ### As a node operator (earn ARK)

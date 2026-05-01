@@ -116,24 +116,25 @@
 <main>
   <span class="badge">Genesis ready</span>
   <h1>Earn ARK for<br>serving AI models</h1>
-  <p class="lead">arknet is a decentralized network for AI inference. Run a node with any GPU, serve any open model, earn tokens. Users get an OpenAI-compatible API backed by thousands of nodes instead of one company.</p>
+  <p class="lead">arknet is a decentralized network for AI inference. Run a node with any GPU, serve any open model, earn tokens. Developers install the SDK and connect — the network finds nodes automatically.</p>
 
-  <pre><span style="color:var(--muted)"># Run a node</span>
-curl -fsSL https://arknet.arkengel.com/install.sh | sh
-arknet init --network mainnet
-arknet start --role compute</pre>
+  <pre><span style="color:var(--muted)"># Use the network (SDK finds nodes automatically)</span>
+pip install arknet
 
-  <pre><span style="color:var(--muted)"># Via the decentralized network (auto-discovers gateways)</span>
 from arknet import Client
-client = Client.connect()  <span style="color:var(--muted)"># finds gateways from on-chain registry</span>
+client = Client.connect()
 response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )</pre>
 
-  <pre><span style="color:var(--muted)"># Via your own local node (free, runs on your hardware)</span>
-client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
-response = client.chat.completions.create(
+  <pre><span style="color:var(--muted)"># Or run locally (free, offline, your hardware)</span>
+curl -fsSL https://arknet.arkengel.com/install.sh | sh
+arknet start --role compute
+
+from arknet import Client
+client = Client("http://localhost:26657")
+response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
 )</pre>

@@ -123,10 +123,11 @@ response = client.chat_completion(
     require_https=True,
 )</pre>
 
-<h3>OpenAI SDK (any gateway)</h3>
+<h3>Raw OpenAI SDK (advanced)</h3>
+<p>If using the OpenAI SDK directly, point at any arknet node. You'll need a gateway URL — the arknet SDK above finds one automatically.</p>
 <pre>from openai import OpenAI
 
-client = OpenAI(base_url="https://any-gateway.example.com/v1", api_key="ark1...")  # your wallet address
+client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
 response = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Confidential question here"}],

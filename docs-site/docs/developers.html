@@ -141,17 +141,15 @@ let resp = client.chat_completion(arknet_sdk::ChatRequest {
 }).await?;
 println!("{}", resp.choices[0].message.content);</pre>
 
-<h3>Any OpenAI client</h3>
-<pre># Point at any public gateway (discover via /v1/gateways on any node)
-from openai import OpenAI
-client = OpenAI(base_url="https://any-gateway.example.com/v1", api_key="ark1...")  # your wallet address
-response = client.chat.completions.create(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Hello from arknet"}],
-)</pre>
-<pre># Via your own local node (free, no wallet needed)
-from openai import OpenAI
+<h3>Raw OpenAI SDK (advanced)</h3>
+<p>If you already have an OpenAI integration, point it at any arknet node. You'll need to know a node URL — the arknet SDKs above handle this automatically via <code>Client.connect()</code>.</p>
+<pre>from openai import OpenAI
+
+# Local node (free, no wallet needed)
 client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
+
+# Remote node (find URLs via /v1/gateways on any running node)
+# client = OpenAI(base_url="https://some-gateway:26657/v1", api_key="ark1...")
 response = client.chat.completions.create(
     model="meta-llama/Llama-3.1-8B-Instruct",
     messages=[{"role": "user", "content": "Hello from arknet"}],
