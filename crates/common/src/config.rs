@@ -55,6 +55,10 @@ pub struct NodeConfig {
     /// Trusted Execution Environment (TEE) settings for confidential inference.
     #[serde(default)]
     pub tee: TeeSection,
+
+    /// Data availability layer (Celestia / EigenDA).
+    #[serde(default)]
+    pub da: DaSection,
 }
 
 /// `[node]` section.
@@ -278,6 +282,23 @@ pub struct TeeSection {
     /// Path to the enclave keypair file. Defaults to `<data_dir>/keys/enclave.key`.
     #[serde(default)]
     pub enclave_key_path: Option<PathBuf>,
+}
+
+/// Data availability layer settings.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DaSection {
+    /// DA layer to use: `"inline"` (default, no offload), `"celestia"`, `"eigenda"`.
+    #[serde(default)]
+    pub layer: String,
+    /// RPC endpoint of the DA node (e.g. `http://localhost:26658` for Celestia light node).
+    #[serde(default)]
+    pub endpoint: String,
+    /// Namespace identifier (hex). Defaults to the arknet namespace.
+    #[serde(default)]
+    pub namespace: String,
+    /// Bearer auth token for the DA node RPC.
+    #[serde(default)]
+    pub auth_token: String,
 }
 
 impl NodeConfig {

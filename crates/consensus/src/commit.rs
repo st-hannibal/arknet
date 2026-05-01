@@ -201,6 +201,18 @@ pub fn commit_block(
         tracing::warn!(error = %e, height = block.header.height, "failed to persist block");
     }
 
+    // Prune old blocks to bound disk usage. Keep the last 10,000 blocks;
+    // state tree (balances, staking) is not affected.
+    const BLOCK_RETENTION: u64 = 10_000;
+    if block.header.height > BLOCK_RETENTION {
+        let keep_from = block.header.height - BLOCK_RETENTION;
+        match state.prune_blocks_before(keep_from) {
+            Ok(0) => {}
+            Ok(n) => tracing::debug!(pruned = n, keep_from, "pruned old blocks"),
+            Err(e) => tracing::warn!(error = %e, "block pruning failed"),
+        }
+    }
+
     // Emit Phase-1 metrics for the committed block.
     metrics::gauge!("arknet_consensus_height").set(block.header.height as f64);
     let mut receipts_count: u64 = 0;

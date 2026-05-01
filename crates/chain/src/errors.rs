@@ -26,6 +26,10 @@ pub enum ChainError {
     /// A fee-market update was given out-of-range inputs.
     #[error("fee-market out of range: {0}")]
     FeeMarket(&'static str),
+
+    /// Data availability layer error.
+    #[error("DA error: {0}")]
+    Da(String),
 }
 
 /// Chain result type.
