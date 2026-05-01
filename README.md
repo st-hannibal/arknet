@@ -214,7 +214,7 @@ Full list with SHA256 digests: [models](https://arknet.arkengel.com/docs/models)
 
 ## Status
 
-**575 tests. 0 blockers. Validator producing blocks.**
+**615 tests. 0 blockers. Validator producing blocks.**
 
 | Milestone | Status |
 |-----------|--------|
