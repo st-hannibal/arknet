@@ -64,7 +64,7 @@
 <h1><span class="status-dot wait" id="status-dot"></span>Block Explorer</h1>
 
 <div class="connect-bar">
-  <input type="text" id="rpc-url" value="http://127.0.0.1:26657" placeholder="Node RPC URL">
+  <input type="text" id="rpc-url" value="https://api.arknet.arkengel.com" placeholder="Node RPC URL">
   <button onclick="connect()">Connect</button>
 </div>
 <div id="error-msg"></div>
@@ -87,6 +87,37 @@
   <div class="row"><span class="k">Address</span><span class="v" id="acct-addr">—</span></div>
   <div class="row"><span class="k">Balance</span><span class="v" id="acct-balance">—</span></div>
   <div class="row"><span class="k">Nonce</span><span class="v" id="acct-nonce">—</span></div>
+</div>
+
+<!-- Block lookup -->
+<h2>Block Lookup</h2>
+<div class="search-bar">
+  <input type="text" id="block-input" placeholder="Block height (e.g. 0)">
+  <button onclick="lookupBlock()">Search</button>
+</div>
+<div class="result" id="block-result">
+  <div class="row"><span class="k">Height</span><span class="v" id="blk-height">—</span></div>
+  <div class="row"><span class="k">Hash</span><span class="v" id="blk-hash">—</span></div>
+  <div class="row"><span class="k">Parent Hash</span><span class="v" id="blk-parent">—</span></div>
+  <div class="row"><span class="k">State Root</span><span class="v" id="blk-state-root">—</span></div>
+  <div class="row"><span class="k">Timestamp</span><span class="v" id="blk-time">—</span></div>
+  <div class="row"><span class="k">Transactions</span><span class="v" id="blk-txs">—</span></div>
+  <div class="row"><span class="k">Base Fee</span><span class="v" id="blk-fee">—</span></div>
+  <div class="row"><span class="k">Proposer</span><span class="v" id="blk-proposer">—</span></div>
+  <div class="row" id="blk-genesis-row" style="display:none"><span class="k">Genesis Message</span><span class="v" id="blk-genesis">—</span></div>
+</div>
+
+<!-- Tx lookup -->
+<h2>Transaction Lookup</h2>
+<div class="search-bar">
+  <input type="text" id="tx-input" placeholder="Transaction hash (0x...)">
+  <button onclick="lookupTx()">Search</button>
+</div>
+<div class="result" id="tx-result">
+  <div class="row"><span class="k">Hash</span><span class="v" id="tx-hash">—</span></div>
+  <div class="row"><span class="k">Block Height</span><span class="v" id="tx-height">—</span></div>
+  <div class="row"><span class="k">Type</span><span class="v" id="tx-type">—</span></div>
+  <div class="row"><span class="k">From</span><span class="v" id="tx-from">—</span></div>
 </div>
 
 <!-- Models -->
@@ -205,10 +236,77 @@ async function lookupAccount() {
   }
 }
 
+async function lookupBlock() {
+  const height = document.getElementById('block-input').value.trim();
+  const result = document.getElementById('block-result');
+  showError('');
+
+  if (!RPC) { showError('Connect to a node first'); return; }
+  if (height === '') { showError('Enter a block height'); return; }
+
+  try {
+    const resp = await fetch(RPC + '/v1/block/' + height);
+    if (resp.ok) {
+      const b = await resp.json();
+      document.getElementById('blk-height').textContent = b.height.toLocaleString();
+      document.getElementById('blk-hash').textContent = '0x' + b.hash;
+      document.getElementById('blk-parent').textContent = '0x' + b.parent_hash;
+      document.getElementById('blk-state-root').textContent = '0x' + b.state_root;
+      document.getElementById('blk-time').textContent = new Date(b.timestamp_ms).toISOString();
+      document.getElementById('blk-txs').textContent = b.tx_count;
+      const fee = BigInt(b.base_fee || 0);
+      document.getElementById('blk-fee').textContent = fee.toLocaleString() + ' ark_atom/gas';
+      document.getElementById('blk-proposer').textContent = b.proposer;
+      if (b.genesis_message) {
+        document.getElementById('blk-genesis').textContent = b.genesis_message;
+        document.getElementById('blk-genesis-row').style.display = 'flex';
+      } else {
+        document.getElementById('blk-genesis-row').style.display = 'none';
+      }
+      result.classList.add('visible');
+    } else {
+      const body = await resp.json().catch(() => ({}));
+      showError(body.error || 'Block not found');
+      result.classList.remove('visible');
+    }
+  } catch (e) {
+    showError('Request failed: ' + e.message);
+  }
+}
+
+async function lookupTx() {
+  const hash = document.getElementById('tx-input').value.trim();
+  const result = document.getElementById('tx-result');
+  showError('');
+
+  if (!RPC) { showError('Connect to a node first'); return; }
+  if (!hash) { showError('Enter a transaction hash'); return; }
+
+  try {
+    const resp = await fetch(RPC + '/v1/tx/' + hash.replace(/^0x/, ''));
+    if (resp.ok) {
+      const t = await resp.json();
+      document.getElementById('tx-hash').textContent = t.tx_hash;
+      document.getElementById('tx-height').textContent = t.block_height.toLocaleString();
+      document.getElementById('tx-type').textContent = t.type;
+      document.getElementById('tx-from').textContent = t.from;
+      result.classList.add('visible');
+    } else {
+      const body = await resp.json().catch(() => ({}));
+      showError(body.error || 'Transaction not found');
+      result.classList.remove('visible');
+    }
+  } catch (e) {
+    showError('Request failed: ' + e.message);
+  }
+}
+
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // Enter key triggers search
 document.getElementById('addr-input').addEventListener('keydown', e => { if (e.key === 'Enter') lookupAccount(); });
+document.getElementById('block-input').addEventListener('keydown', e => { if (e.key === 'Enter') lookupBlock(); });
+document.getElementById('tx-input').addEventListener('keydown', e => { if (e.key === 'Enter') lookupTx(); });
 document.getElementById('rpc-url').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
 </script>
 
