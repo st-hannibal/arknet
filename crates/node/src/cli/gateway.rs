@@ -80,10 +80,7 @@ async fn unregister(data_dir: &Path, args: &UnregisterArgs) -> Result<()> {
     let node_id = arknet_common::types::NodeId::new(pubkey);
     let operator = arknet_common::types::Address::new(addr);
 
-    let tx = arknet_chain::transactions::Transaction::UnregisterGateway {
-        node_id,
-        operator,
-    };
+    let tx = arknet_chain::transactions::Transaction::UnregisterGateway { node_id, operator };
 
     let hash = sign_and_submit(&key_bytes, &pubkey, tx, &args.rpc).await?;
     println!("Gateway unregistered!");
