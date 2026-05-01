@@ -119,9 +119,9 @@
   <p class="lead">arknet is a decentralized network for AI inference. Run a node with any GPU, serve any open model, earn tokens. Developers install the SDK and connect — the network finds nodes automatically.</p>
 
   <pre><span style="color:var(--muted)"># Use the network (SDK finds nodes automatically)</span>
-pip install arknet
+pip install arknet-sdk
 
-from arknet import Client
+from arknet_sdk import Client
 client = Client.connect()
 response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",
@@ -132,7 +132,7 @@ response = client.chat_completion(
 curl -fsSL https://arknet.arkengel.com/install.sh | sh
 arknet start --role compute
 
-from arknet import Client
+from arknet_sdk import Client
 client = Client("http://localhost:26657")
 response = client.chat_completion(
     model="meta-llama/Llama-3.1-8B-Instruct",

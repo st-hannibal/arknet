@@ -17,10 +17,10 @@ Anyone with a computer earns **ARK** for serving AI models. Any developer querie
 
 **Use the network** (3 lines — the SDK finds nodes automatically):
 ```bash
-pip install arknet
+pip install arknet-sdk
 ```
 ```python
-from arknet import Client
+from arknet_sdk import Client
 
 client = Client.connect()    # discovers nodes from the on-chain registry
 response = client.chat_completion(
@@ -33,7 +33,7 @@ No URLs to configure, no gateway to find — the SDK reads the blockchain's gate
 
 **Run locally** (free, offline, your hardware):
 ```python
-from arknet import Client
+from arknet_sdk import Client
 
 client = Client("http://localhost:26657")    # your own node
 response = client.chat_completion(
@@ -90,10 +90,10 @@ Users never interact with the blockchain directly — the OpenAI API is the inte
 Install the SDK and connect. The network handles node discovery, routing, payment, and verification — you never need to know any server URLs. During the bootstrap period (first 6 months), inference is **free**.
 
 ```bash
-pip install arknet    # or: npm install arknet-sdk / cargo add arknet-sdk
+pip install arknet-sdk    # or: npm install arknet-sdk / cargo add arknet-sdk
 ```
 ```python
-from arknet import Client
+from arknet_sdk import Client
 
 client = Client.connect()    # auto-discovers nodes from the blockchain
 response = client.chat_completion(

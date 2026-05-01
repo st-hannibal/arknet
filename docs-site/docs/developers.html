@@ -78,7 +78,7 @@
 
 <h3>Install</h3>
 <pre># Python
-pip install arknet
+pip install arknet-sdk
 
 # TypeScript / Node.js
 npm install arknet-sdk
@@ -87,7 +87,7 @@ npm install arknet-sdk
 cargo add arknet-sdk</pre>
 
 <h3>Python</h3>
-<pre>from arknet import Client
+<pre>from arknet_sdk import Client
 
 # Auto-discover a gateway (recommended for network usage)
 client = Client.connect()
@@ -196,7 +196,7 @@ response = client.chat.completions.create(
 <p>See the <a href="/docs/privacy.html">Privacy &amp; Security</a> page for the full three-tier privacy model, TEE operator guide, and comparison with centralized providers.</p>
 
 <h3>Confidential inference example</h3>
-<pre>from arknet import Client
+<pre>from arknet_sdk import Client
 
 # Auto-discover an HTTPS + TEE gateway
 client = Client.connect(require_https=True)

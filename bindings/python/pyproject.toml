@@ -1,5 +1,5 @@
 [project]
-name = "arknet"
+name = "arknet-sdk"
 version = "0.1.0"
 description = "Python SDK for the arknet decentralized AI inference network."
 readme = "README.md"

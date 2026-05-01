@@ -112,7 +112,7 @@
 <p>Set <code>prefer_tee=True</code> and the router will only dispatch your request to TEE-capable compute nodes.</p>
 
 <h3>arknet Python SDK (recommended)</h3>
-<pre>from arknet import Client
+<pre>from arknet_sdk import Client
 
 # Auto-discovers HTTPS gateways from on-chain registry
 client = Client.connect(require_https=True)
@@ -184,7 +184,7 @@ platform = "intel-tdx"</pre>
 </table>
 
 <h3>For users</h3>
-<pre>from arknet import Client
+<pre>from arknet_sdk import Client
 
 client = Client.connect(require_https=True)  # auto-discover HTTPS gateway
 response = client.chat_completion(
@@ -206,7 +206,7 @@ response = client.chat_completion(
 <h3>Gateway auto-discovery</h3>
 <p>SDKs can discover gateways automatically from the on-chain registry:</p>
 <pre># Python — auto-discover and connect
-from arknet import Client
+from arknet_sdk import Client
 client = Client.connect(require_https=True)
 
 # TypeScript — auto-discover and connect
