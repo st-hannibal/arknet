@@ -66,11 +66,13 @@ impl Client {
 
     /// Auto-discover a gateway from the on-chain registry.
     ///
-    /// Contacts each seed URL's `/v1/gateways`, picks the best
-    /// reachable gateway (HTTPS preferred), and returns a connected client.
+    /// Fetches the live seed list from `seeds.json` on the arknet
+    /// website, then contacts each seed's `/v1/gateways`. If the
+    /// seed list is unreachable, falls back to the hardcoded list.
+    /// No code changes needed to add new seeds — just edit seeds.json.
     pub async fn connect(opts: ConnectOptions) -> Result<Self> {
         let seeds = if opts.seeds.is_empty() {
-            vec!["https://api.arknet.arkengel.com".to_string()]
+            fetch_seeds().await
         } else {
             opts.seeds
         };
@@ -156,6 +158,42 @@ impl Client {
         resp.json::<ModelsResponse>()
             .await
             .map_err(|e| SdkError::Http(e.to_string()))
+    }
+}
+
+const SEEDS_JSON_URL: &str = "https://arknet.arkengel.com/seeds.json";
+const FALLBACK_SEEDS: &[&str] = &["https://api.arknet.arkengel.com"];
+
+/// Fetch the live seed list from the static seeds.json file.
+/// Falls back to the hardcoded list if unreachable.
+async fn fetch_seeds() -> Vec<String> {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return FALLBACK_SEEDS.iter().map(|s| s.to_string()).collect(),
+    };
+    let resp = match client.get(SEEDS_JSON_URL).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return FALLBACK_SEEDS.iter().map(|s| s.to_string()).collect(),
+    };
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return FALLBACK_SEEDS.iter().map(|s| s.to_string()).collect(),
+    };
+    let urls: Vec<String> = body["seeds"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s["url"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if urls.is_empty() {
+        FALLBACK_SEEDS.iter().map(|s| s.to_string()).collect()
+    } else {
+        urls
     }
 }
 

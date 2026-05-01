@@ -123,7 +123,29 @@ Every node exposes **one public port** (P2P) and keeps everything else private:
 | **RPC** | 26657 | **No** — localhost only | Your personal dashboard. Query balances, submit transactions, run the explorer. |
 | **Metrics** | 9090 | **No** — localhost only | Prometheus metrics for your monitoring stack. |
 
-**If you want to run a public gateway** (let others send inference through you): change RPC bind to `0.0.0.0:26657` in `node.toml` and register on-chain. SDKs discover your gateway automatically via `/v1/gateways`. HTTPS gateways earn a 1.2x reward multiplier. You earn the 5% router cut on every job you dispatch.
+**If you want to run a public gateway** (let others send inference through you): change RPC bind to `0.0.0.0:26657` in `node.toml` and register on-chain. SDKs discover your gateway automatically. HTTPS gateways earn a 1.2x reward multiplier. You earn the 5% router cut on every job you dispatch.
+
+### How SDK discovery works
+
+SDKs find nodes in two steps:
+
+1. Fetch `https://arknet.arkengel.com/seeds.json` — a static file listing known gateways
+2. Call `/v1/gateways` on a seed to get the full on-chain gateway list
+
+To add your gateway to the seed list, submit a PR editing [`docs-site/seeds.json`](docs-site/seeds.json):
+
+```json
+{
+  "version": 1,
+  "chain_id": "arknet-1",
+  "seeds": [
+    {"url": "https://api.arknet.arkengel.com", "operator": "st-hannibal", "https": true},
+    {"url": "https://your-gateway.example.com", "operator": "you", "https": true}
+  ]
+}
+```
+
+No SDK release needed — all SDKs fetch this file at connect time. The hardcoded fallback list in the SDK code is only used if `seeds.json` is unreachable.
 
 ```toml
 # ~/.arknet/node.toml — public gateway config

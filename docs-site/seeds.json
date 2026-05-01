@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "chain_id": "arknet-1",
+  "seeds": [
+    {
+      "url": "https://api.arknet.arkengel.com",
+      "operator": "st-hannibal",
+      "https": true
+    }
+  ]
+}

@@ -9,9 +9,23 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 
-_DEFAULT_SEEDS = [
+_SEEDS_JSON_URL = "https://arknet.arkengel.com/seeds.json"
+
+_FALLBACK_SEEDS = [
     "https://api.arknet.arkengel.com",
 ]
+
+
+def _fetch_seeds() -> List[str]:
+    """Fetch the live seed list from the static seeds.json file.
+    Falls back to the hardcoded list if unreachable."""
+    try:
+        req = Request(_SEEDS_JSON_URL, method="GET")
+        with urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        return [s["url"] for s in data.get("seeds", []) if s.get("url")]
+    except Exception:
+        return _FALLBACK_SEEDS
 
 
 class Client:
@@ -51,7 +65,7 @@ class Client:
         require_https:
             Only connect to HTTPS gateways. Raises if none available.
         """
-        seeds = seed_urls or _DEFAULT_SEEDS
+        seeds = seed_urls or _fetch_seeds()
         for seed in seeds:
             try:
                 url = f"{seed.rstrip('/')}/v1/gateways"

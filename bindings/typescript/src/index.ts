@@ -92,7 +92,20 @@ export interface ModelsResponse {
 
 // ─── Client ─────────────────────────────────────────────────────────
 
-const DEFAULT_SEEDS = ["https://api.arknet.arkengel.com"];
+const SEEDS_JSON_URL = "https://arknet.arkengel.com/seeds.json";
+const FALLBACK_SEEDS = ["https://api.arknet.arkengel.com"];
+
+async function fetchSeeds(): Promise<string[]> {
+  try {
+    const resp = await fetch(SEEDS_JSON_URL);
+    if (!resp.ok) return FALLBACK_SEEDS;
+    const data = (await resp.json()) as { seeds?: Array<{ url?: string }> };
+    const urls = (data.seeds ?? []).map((s) => s.url).filter(Boolean) as string[];
+    return urls.length > 0 ? urls : FALLBACK_SEEDS;
+  } catch {
+    return FALLBACK_SEEDS;
+  }
+}
 
 export class ArknetClient {
   private baseUrl: string;
@@ -112,7 +125,7 @@ export class ArknetClient {
     requireHttps?: boolean;
     apiKey?: string;
   }): Promise<ArknetClient> {
-    const seeds = opts?.seeds ?? DEFAULT_SEEDS;
+    const seeds = opts?.seeds ?? (await fetchSeeds());
     for (const seed of seeds) {
       try {
         const resp = await fetch(`${seed.replace(/\/+$/, "")}/v1/gateways`);
