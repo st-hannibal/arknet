@@ -53,9 +53,9 @@ pub struct PullArgs {
     /// Declared file size in bytes.
     #[arg(long)]
     pub size: u64,
-    /// Declared GGUF quantization tag (default F32 for tests).
-    #[arg(long, default_value = "F32")]
-    pub quant: String,
+    /// Declared GGUF quantization tag (auto-detected from model ref if omitted).
+    #[arg(long)]
+    pub quant: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -74,9 +74,9 @@ pub struct LoadArgs {
     /// Declared file size in bytes.
     #[arg(long)]
     pub size: u64,
-    /// Declared GGUF quantization tag.
-    #[arg(long, default_value = "F32")]
-    pub quant: String,
+    /// Declared GGUF quantization tag (auto-detected from model ref if omitted).
+    #[arg(long)]
+    pub quant: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -98,9 +98,9 @@ pub struct BenchArgs {
     /// Declared file size in bytes.
     #[arg(long)]
     pub size: u64,
-    /// Declared GGUF quantization tag.
-    #[arg(long, default_value = "F32")]
-    pub quant: String,
+    /// Declared GGUF quantization tag (auto-detected from model ref if omitted).
+    #[arg(long)]
+    pub quant: Option<String>,
     /// Tokens to generate during the timed portion.
     #[arg(long, default_value_t = 128)]
     pub tokens: u32,
@@ -175,7 +175,13 @@ async fn run_list(root: std::path::PathBuf) -> Result<()> {
 
 async fn run_pull(root: std::path::PathBuf, cfg: NodeConfig, args: PullArgs) -> Result<()> {
     let model_ref = ModelRef::parse(&args.model_ref).map_err(NodeError::ModelRef)?;
-    let manifest = build_manifest(&model_ref, &args.url, &args.sha256, args.size, &args.quant)?;
+    let manifest = build_manifest(
+        &model_ref,
+        &args.url,
+        &args.sha256,
+        args.size,
+        args.quant.as_deref(),
+    )?;
     let rt = open_runtime_with_manifest(root, cfg, &model_ref, manifest).await?;
     let sandbox = rt.model_manager.ensure_local(&model_ref).await?;
     println!("pulled + verified: {}", sandbox.path().display());
@@ -184,7 +190,13 @@ async fn run_pull(root: std::path::PathBuf, cfg: NodeConfig, args: PullArgs) -> 
 
 async fn run_load(root: std::path::PathBuf, cfg: NodeConfig, args: LoadArgs) -> Result<()> {
     let model_ref = ModelRef::parse(&args.model_ref).map_err(NodeError::ModelRef)?;
-    let manifest = build_manifest(&model_ref, &args.url, &args.sha256, args.size, &args.quant)?;
+    let manifest = build_manifest(
+        &model_ref,
+        &args.url,
+        &args.sha256,
+        args.size,
+        args.quant.as_deref(),
+    )?;
     let rt = open_runtime_with_manifest(root, cfg, &model_ref, manifest).await?;
     let handle = rt.inference.load(&model_ref).await?;
     println!("loaded: {}", handle.description());
@@ -197,12 +209,16 @@ fn build_manifest(
     url: &str,
     sha256_hex: &str,
     size: u64,
-    quant_str: &str,
+    quant_override: Option<&str>,
 ) -> Result<ModelManifest> {
     let url = Url::parse(url).map_err(|e| NodeError::ModelRef(format!("bad url: {e}")))?;
     let digest = parse_digest(sha256_hex)?;
-    let quant = GgufQuant::parse(quant_str)
-        .ok_or_else(|| NodeError::ModelRef(format!("unknown quant: {quant_str}")))?;
+    let quant = match quant_override {
+        Some(s) => {
+            GgufQuant::parse(s).ok_or_else(|| NodeError::ModelRef(format!("unknown quant: {s}")))?
+        }
+        None => model_ref.quant,
+    };
     Ok(ModelManifest {
         id: ModelId([0u8; 32]),
         model_ref: model_ref.clone(),
@@ -281,7 +297,13 @@ async fn run_verify(root: std::path::PathBuf, _cfg: NodeConfig, args: VerifyArgs
 
 async fn run_bench(root: std::path::PathBuf, cfg: NodeConfig, args: BenchArgs) -> Result<()> {
     let model_ref = ModelRef::parse(&args.model_ref).map_err(NodeError::ModelRef)?;
-    let manifest = build_manifest(&model_ref, &args.url, &args.sha256, args.size, &args.quant)?;
+    let manifest = build_manifest(
+        &model_ref,
+        &args.url,
+        &args.sha256,
+        args.size,
+        args.quant.as_deref(),
+    )?;
     let rt = open_runtime_with_manifest(root, cfg, &model_ref, manifest).await?;
 
     let load_started = Instant::now();

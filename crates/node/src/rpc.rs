@@ -188,12 +188,7 @@ struct LoadRequest {
     url: String,
     sha256: String,
     size_bytes: u64,
-    #[serde(default = "default_quant")]
-    quant: String,
-}
-
-fn default_quant() -> String {
-    "F32".into()
+    quant: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -220,7 +215,7 @@ async fn do_load(state: &RpcState, req: LoadRequest) -> Result<LoadResponse> {
         &req.url,
         &req.sha256,
         req.size_bytes,
-        &req.quant,
+        req.quant.as_deref(),
     )?;
     state.register_manifest(&model_ref, manifest.clone());
 
@@ -576,12 +571,16 @@ fn build_manifest(
     url: &str,
     sha256_hex: &str,
     size: u64,
-    quant_str: &str,
+    quant_override: Option<&str>,
 ) -> Result<ModelManifest> {
     let url = Url::parse(url).map_err(|e| NodeError::ModelRef(format!("bad url: {e}")))?;
     let digest = parse_digest(sha256_hex)?;
-    let quant = GgufQuant::parse(quant_str)
-        .ok_or_else(|| NodeError::ModelRef(format!("unknown quant: {quant_str}")))?;
+    let quant = match quant_override {
+        Some(s) => {
+            GgufQuant::parse(s).ok_or_else(|| NodeError::ModelRef(format!("unknown quant: {s}")))?
+        }
+        None => model_ref.quant,
+    };
     Ok(ModelManifest {
         id: ModelId([0u8; 32]),
         model_ref: model_ref.clone(),
