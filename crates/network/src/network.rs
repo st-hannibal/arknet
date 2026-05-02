@@ -292,18 +292,16 @@ impl Network {
             }
             // Extract the /p2p/<peer_id> from the bootstrap multiaddr and
             // listen via relay circuit through that peer.
-            if let Some(libp2p::multiaddr::Protocol::P2p(relay_peer_id)) = addr
+            if addr
                 .iter()
-                .find(|p| matches!(p, libp2p::multiaddr::Protocol::P2p(_)))
+                .any(|p| matches!(p, libp2p::multiaddr::Protocol::P2p(_)))
             {
-                match swarm.listen_on(
-                    Multiaddr::from(std::net::Ipv4Addr::UNSPECIFIED)
-                        .with(libp2p::multiaddr::Protocol::Tcp(0))
-                        .with(libp2p::multiaddr::Protocol::P2p(relay_peer_id))
-                        .with(libp2p::multiaddr::Protocol::P2pCircuit),
-                ) {
-                    Ok(_) => info!(relay_peer = %relay_peer_id, "listening via relay circuit"),
-                    Err(e) => warn!(error = %e, "relay circuit listen failed"),
+                let relay_listen = addr.clone().with(libp2p::multiaddr::Protocol::P2pCircuit);
+                match swarm.listen_on(relay_listen.clone()) {
+                    Ok(_) => info!(addr = %relay_listen, "listening via relay circuit"),
+                    Err(e) => {
+                        warn!(addr = %relay_listen, error = %e, "relay circuit listen failed")
+                    }
                 }
             }
         }

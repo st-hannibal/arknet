@@ -45,9 +45,9 @@ pub mod wallet;
 pub use errors::{Result, SdkError};
 
 /// Hardcoded fallback seed multiaddrs (validator nodes).
-const FALLBACK_SEED_MULTIADDRS: &[&str] = &[
-    "/dns4/arknet.arkengel.com/udp/26656/quic-v1/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f",
-];
+/// Uses IP+TCP because DNS+QUIC isn't supported when relay client is active.
+const FALLBACK_SEED_MULTIADDRS: &[&str] =
+    &["/ip4/63.181.188.155/tcp/26656/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f"];
 
 /// arknet SDK client. Joins the gossip mesh, discovers compute nodes,
 /// and sends signed inference requests over p2p.
