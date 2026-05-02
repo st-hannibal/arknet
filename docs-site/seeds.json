@@ -3,7 +3,7 @@
   "chain_id": "arknet-1",
   "seeds": [
     {
-      "multiaddr": "/dns4/arknet.arkengel.com/tcp/26656/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f",
+      "multiaddr": "/dns4/arknet.arkengel.com/udp/26656/quic-v1/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f",
       "operator": "st-hannibal"
     }
   ]

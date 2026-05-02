@@ -238,8 +238,7 @@ impl Network {
         let local_peer_id = keypair.public().to_peer_id();
         info!(peer_id = %local_peer_id, network_id = %config.network_id, "network starting");
 
-        let behaviour = ArknetBehaviour::new(&keypair, &handshake)?;
-        let mut swarm = SwarmBuilder::with_existing_identity(keypair)
+        let mut swarm = SwarmBuilder::with_existing_identity(keypair.clone())
             .with_tokio()
             .with_tcp(
                 libp2p::tcp::Config::default().nodelay(true),
@@ -248,7 +247,12 @@ impl Network {
             )
             .map_err(|e| NetworkError::Transport(format!("with_tcp: {e}")))?
             .with_quic()
-            .with_behaviour(|_key| behaviour)
+            .with_relay_client(libp2p::noise::Config::new, libp2p::yamux::Config::default)
+            .map_err(|e| NetworkError::Transport(format!("with_relay_client: {e}")))?
+            .with_behaviour(|key, relay_client| {
+                ArknetBehaviour::new(key, &handshake, relay_client)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+            })
             .map_err(|e| NetworkError::Behaviour(format!("with_behaviour: {e}")))?
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
@@ -276,13 +280,31 @@ impl Network {
                 .map_err(|e| NetworkError::Behaviour(format!("gossipsub subscribe: {e}")))?;
         }
 
-        // Dial bootstrap peers. Failures here are logged but not fatal —
-        // a devnet node that can't reach a bootstrap should still come up
-        // so operators can debug it.
+        // Dial bootstrap peers and listen on relay circuits through them
+        // so other peers can reach us via the relay.
         for addr in &config.bootstrap_peers {
             match swarm.dial(addr.clone()) {
                 Ok(()) => debug!(addr = %addr, "dialed bootstrap peer"),
-                Err(e) => warn!(addr = %addr, error = %e, "bootstrap dial failed"),
+                Err(e) => {
+                    warn!(addr = %addr, error = %e, "bootstrap dial failed");
+                    continue;
+                }
+            }
+            // Extract the /p2p/<peer_id> from the bootstrap multiaddr and
+            // listen via relay circuit through that peer.
+            if let Some(libp2p::multiaddr::Protocol::P2p(relay_peer_id)) = addr
+                .iter()
+                .find(|p| matches!(p, libp2p::multiaddr::Protocol::P2p(_)))
+            {
+                match swarm.listen_on(
+                    Multiaddr::from(std::net::Ipv4Addr::UNSPECIFIED)
+                        .with(libp2p::multiaddr::Protocol::Tcp(0))
+                        .with(libp2p::multiaddr::Protocol::P2p(relay_peer_id))
+                        .with(libp2p::multiaddr::Protocol::P2pCircuit),
+                ) {
+                    Ok(_) => info!(relay_peer = %relay_peer_id, "listening via relay circuit"),
+                    Err(e) => warn!(error = %e, "relay circuit listen failed"),
+                }
             }
         }
 

@@ -9,8 +9,8 @@ use std::time::Duration;
 use arknet_compute::wire::PoolOffer;
 use arknet_network::gossip;
 use arknet_network::{
-    HandshakeInfo, Keypair, Multiaddr, NetworkConfig, NetworkEvent, NetworkHandle, PeerRoles,
-    HANDSHAKE_VERSION,
+    HandshakeInfo, InferenceResponseEvent, Keypair, Multiaddr, NetworkConfig, NetworkEvent,
+    NetworkHandle, PeerRoles, HANDSHAKE_VERSION,
 };
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -39,12 +39,15 @@ impl Default for SdkConfig {
     }
 }
 
-/// Handle to the SDK swarm. Cheap to clone.
+/// Handle to the SDK swarm. Cheap to clone (except the response
+/// receiver which is wrapped in Arc<Mutex>).
 #[derive(Clone)]
 pub struct SdkSwarmHandle {
     network: NetworkHandle,
     candidates: CandidateTable,
     shutdown: CancellationToken,
+    inference_responses:
+        std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<InferenceResponseEvent>>>,
 }
 
 impl SdkSwarmHandle {
@@ -60,6 +63,30 @@ impl SdkSwarmHandle {
             .publish(topic, signed_tx_bytes)
             .await
             .map_err(|e| SdkError::P2p(format!("publish tx: {e}")))
+    }
+
+    /// Send an inference request to a compute node via the mesh.
+    /// The validator relays it — no direct connection needed.
+    pub async fn send_inference(&self, peer: libp2p::PeerId, data: Vec<u8>) -> Result<Vec<u8>> {
+        let request_id = self
+            .network
+            .send_inference_request(peer, data)
+            .await
+            .map_err(|e| SdkError::P2p(format!("send inference: {e}")))?;
+
+        let mut rx = self.inference_responses.lock().await;
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(120), rx.recv()).await {
+                Ok(Some(resp)) if resp.request_id == request_id => {
+                    return resp
+                        .result
+                        .map_err(|e| SdkError::P2p(format!("inference response: {e}")));
+                }
+                Ok(Some(_)) => continue,
+                Ok(None) => return Err(SdkError::P2p("inference response channel closed".into())),
+                Err(_) => return Err(SdkError::P2p("inference request timed out (120s)".into())),
+            }
+        }
     }
 
     /// The local peer id.
@@ -98,7 +125,7 @@ pub async fn start(config: SdkConfig) -> Result<(SdkSwarmHandle, JoinHandle<()>)
     let net_config = NetworkConfig::sdk_defaults(&config.network_id, config.bootstrap_peers);
     let shutdown = CancellationToken::new();
 
-    let (handle, _inference_channels, net_join) =
+    let (handle, inference_channels, net_join) =
         arknet_network::Network::start(net_config, keypair, handshake, shutdown.clone())
             .await
             .map_err(|e| SdkError::P2p(format!("network start: {e}")))?;
@@ -132,7 +159,6 @@ pub async fn start(config: SdkConfig) -> Result<(SdkSwarmHandle, JoinHandle<()>)
                                             supports_tee: offer.supports_tee,
                                             timestamp_ms: offer.timestamp_ms,
                                             available_slots: offer.available_slots,
-                                            multiaddrs: vec![],
                                         });
                                     }
                                     Err(e) => {
@@ -168,6 +194,9 @@ pub async fn start(config: SdkConfig) -> Result<(SdkSwarmHandle, JoinHandle<()>)
         network: handle,
         candidates,
         shutdown,
+        inference_responses: std::sync::Arc::new(tokio::sync::Mutex::new(
+            inference_channels.responses,
+        )),
     };
 
     // Wait for at least one candidate or timeout.

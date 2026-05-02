@@ -39,7 +39,6 @@
 pub mod candidate_table;
 pub mod discovery;
 pub mod errors;
-pub mod p2p;
 pub mod session;
 pub mod wallet;
 
@@ -47,7 +46,7 @@ pub use errors::{Result, SdkError};
 
 /// Hardcoded fallback seed multiaddrs (validator nodes).
 const FALLBACK_SEED_MULTIADDRS: &[&str] = &[
-    "/dns4/arknet.arkengel.com/tcp/26656/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f",
+    "/dns4/arknet.arkengel.com/udp/26656/quic-v1/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f",
 ];
 
 /// arknet SDK client. Joins the gossip mesh, discovers compute nodes,
@@ -178,35 +177,28 @@ impl Client {
         }
 
         // Try candidates in order (sorted by capacity + stake).
+        // Send via the mesh — no direct connection needed.
         let max_retries = req.max_retries.unwrap_or(3).min(candidates.len() as u32);
         for candidate in candidates.iter().take(max_retries as usize) {
-            if candidate.multiaddrs.is_empty() {
-                continue;
-            }
+            let peer_id = match libp2p::PeerId::from_bytes(&candidate.peer_id_bytes) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
 
-            for addr in &candidate.multiaddrs {
-                match p2p::P2pClient::connect(addr).await {
-                    Ok(mut client) => match client.infer(encoded.clone()).await {
-                        Ok(resp) => {
-                            if let Ok(events) = borsh::from_slice::<
-                                Vec<arknet_compute::wire::InferenceJobEvent>,
-                            >(&resp)
-                            {
-                                if events.iter().any(|e| {
-                                    matches!(
-                                        e,
-                                        arknet_compute::wire::InferenceJobEvent::Busy { .. }
-                                    )
-                                }) {
-                                    break;
-                                }
-                            }
-                            return Ok(resp);
+            match self.swarm.send_inference(peer_id, encoded.clone()).await {
+                Ok(resp) => {
+                    if let Ok(events) =
+                        borsh::from_slice::<Vec<arknet_compute::wire::InferenceJobEvent>>(&resp)
+                    {
+                        if events.iter().any(|e| {
+                            matches!(e, arknet_compute::wire::InferenceJobEvent::Busy { .. })
+                        }) {
+                            continue;
                         }
-                        Err(_) => continue,
-                    },
-                    Err(_) => continue,
+                    }
+                    return Ok(resp);
                 }
+                Err(_) => continue,
             }
         }
 

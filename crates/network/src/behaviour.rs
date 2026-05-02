@@ -18,8 +18,8 @@
 use std::time::Duration;
 
 use libp2p::{
-    gossipsub, identify, identity::Keypair, kad, kad::store::MemoryStore, ping,
-    swarm::NetworkBehaviour, StreamProtocol,
+    autonat, dcutr, gossipsub, identify, identity::Keypair, kad, kad::store::MemoryStore, ping,
+    relay, swarm::NetworkBehaviour, StreamProtocol,
 };
 
 use crate::inference_proto;
@@ -45,6 +45,14 @@ pub struct ArknetBehaviour {
     pub ping: ping::Behaviour,
     /// Request-response for inference job forwarding between router and compute.
     pub inference: inference_proto::InferenceBehaviour,
+    /// Relay server — validators accept relay reservations from other peers.
+    pub relay_server: relay::Behaviour,
+    /// Relay client — non-public nodes reach peers through a relay.
+    pub relay_client: libp2p::relay::client::Behaviour,
+    /// DCUtR — direct connection upgrade through relay (NAT hole punching).
+    pub dcutr: dcutr::Behaviour,
+    /// AutoNAT — detect if we're behind NAT.
+    pub autonat: autonat::Behaviour,
 }
 
 /// libp2p protocol identifier for our kademlia instance. Must match on
@@ -57,14 +65,15 @@ pub const KAD_PROTOCOL: &str = "/arknet/kad/1";
 pub const IDENTIFY_PROTOCOL: &str = "/arknet/id/1";
 
 impl ArknetBehaviour {
-    /// Build the composed behaviour with sensible defaults for Phase 1.
-    pub fn new(keypair: &Keypair, handshake: &HandshakeInfo) -> crate::errors::Result<Self> {
+    /// Build the composed behaviour. The relay client is provided by
+    /// the swarm builder's `with_relay_client` call.
+    pub fn new(
+        keypair: &Keypair,
+        handshake: &HandshakeInfo,
+        relay_client: libp2p::relay::client::Behaviour,
+    ) -> std::result::Result<Self, NetworkError> {
         let local_peer_id = keypair.public().to_peer_id();
 
-        // Gossipsub — default heartbeat, strict-signing disabled because we
-        // piggyback authenticity on the libp2p secure channel rather than
-        // individual message signatures. Re-enable if we ever accept
-        // off-channel gossip.
         let gs_config = gossipsub::ConfigBuilder::default()
             .heartbeat_interval(Duration::from_millis(700))
             .validation_mode(gossipsub::ValidationMode::Strict)
@@ -76,21 +85,15 @@ impl ArknetBehaviour {
         )
         .map_err(|e| NetworkError::Behaviour(format!("gossipsub new: {e}")))?;
 
-        // Kademlia — memory store is sufficient for Phase 1 devnet.
-        // Persistence across restarts happens via the peer book, not the
-        // DHT store.
         let kad_store = MemoryStore::new(local_peer_id);
         let kad_cfg = kad::Config::new(StreamProtocol::new(KAD_PROTOCOL));
         let kad = kad::Behaviour::with_config(local_peer_id, kad_store, kad_cfg);
 
-        // Identify — agent_version carries our handshake payload.
         let identify_cfg = identify::Config::new(IDENTIFY_PROTOCOL.to_string(), keypair.public())
             .with_agent_version(handshake.to_agent_version())
-            // Keep identify pushes rare — the payload is static after boot.
             .with_interval(Duration::from_secs(60));
         let identify = identify::Behaviour::new(identify_cfg);
 
-        // Ping — 15 s interval, 20 s timeout. Mostly a liveness signal.
         let ping = ping::Behaviour::new(
             ping::Config::new()
                 .with_interval(Duration::from_secs(15))
@@ -98,6 +101,9 @@ impl ArknetBehaviour {
         );
 
         let inference = inference_proto::build_inference_behaviour();
+        let relay_server = relay::Behaviour::new(local_peer_id, relay::Config::default());
+        let dcutr = dcutr::Behaviour::new(local_peer_id);
+        let autonat = autonat::Behaviour::new(local_peer_id, autonat::Config::default());
 
         Ok(Self {
             gossipsub,
@@ -105,6 +111,10 @@ impl ArknetBehaviour {
             identify,
             ping,
             inference,
+            relay_server,
+            relay_client,
+            dcutr,
+            autonat,
         })
     }
 }
@@ -127,6 +137,8 @@ mod tests {
     fn behaviour_constructs() {
         let kp = Keypair::generate_ed25519();
         let info = sample_handshake();
-        let _ = ArknetBehaviour::new(&kp, &info).unwrap();
+        let local_peer_id = kp.public().to_peer_id();
+        let (_transport, relay_client) = libp2p::relay::client::new(local_peer_id);
+        let _ = ArknetBehaviour::new(&kp, &info, relay_client).unwrap();
     }
 }

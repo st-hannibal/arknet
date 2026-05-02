@@ -28,8 +28,6 @@ pub struct CandidateEntry {
     pub timestamp_ms: Timestamp,
     /// Available inference slots.
     pub available_slots: u32,
-    /// Known multiaddrs resolved via Kademlia / identify.
-    pub multiaddrs: Vec<String>,
 }
 
 /// Thread-safe candidate table updated by the gossip listener and
@@ -51,14 +49,6 @@ impl CandidateTable {
     pub fn upsert(&self, entry: CandidateEntry) {
         let mut map = self.inner.write().expect("candidate table poisoned");
         map.insert(entry.peer_id_bytes.clone(), entry);
-    }
-
-    /// Update the known multiaddrs for a peer.
-    pub fn set_addrs(&self, peer_id_bytes: &[u8], addrs: Vec<String>) {
-        let mut map = self.inner.write().expect("candidate table poisoned");
-        if let Some(entry) = map.get_mut(peer_id_bytes) {
-            entry.multiaddrs = addrs;
-        }
     }
 
     /// Return candidates that serve `model` and are not stale, sorted
@@ -109,7 +99,6 @@ mod tests {
             supports_tee: false,
             timestamp_ms: ts,
             available_slots: slots,
-            multiaddrs: vec![],
         }
     }
 
@@ -159,15 +148,6 @@ mod tests {
         let results = table.eligible_for("new-model", 2000);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].total_stake, 200);
-    }
-
-    #[test]
-    fn set_addrs_updates_existing() {
-        let table = CandidateTable::new();
-        table.upsert(entry(1, &["m"], 100, 1, 1000));
-        table.set_addrs(&[1], vec!["/ip4/1.2.3.4/tcp/26656".into()]);
-        let results = table.eligible_for("m", 1000);
-        assert_eq!(results[0].multiaddrs.len(), 1);
     }
 
     #[test]
