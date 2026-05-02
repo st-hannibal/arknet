@@ -28,7 +28,7 @@ async fn main() {
     println!("\nconnecting to mesh via validator seed...");
     let client = Client::connect(ConnectOptions {
         seeds: vec![
-            "/ip4/63.181.188.155/tcp/26656/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f"
+            "/dns4/arknet.arkengel.com/tcp/26656/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f"
                 .into(),
         ],
         network_id: "mainnet".into(),
