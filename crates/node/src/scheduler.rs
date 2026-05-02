@@ -174,7 +174,9 @@ mod tests {
         let shutdown = CancellationToken::new();
 
         let lm = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
-        let err = run(Role::Verifier, rt, None, lm, shutdown).await.unwrap_err();
+        let err = run(Role::Verifier, rt, None, lm, shutdown)
+            .await
+            .unwrap_err();
         assert!(matches!(err, NodeError::Config(_)));
     }
 
@@ -187,7 +189,9 @@ mod tests {
             .unwrap();
         let shutdown = CancellationToken::new();
         let lm = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
-        let err = run(Role::Validator, rt, None, lm, shutdown).await.unwrap_err();
+        let err = run(Role::Validator, rt, None, lm, shutdown)
+            .await
+            .unwrap_err();
         assert!(matches!(err, NodeError::Config(_)));
     }
 

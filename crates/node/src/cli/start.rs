@@ -121,7 +121,8 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
 
     // Drive the role. When it exits, request shutdown so the servers
     // come down with it.
-    let role_result = scheduler::run(role, rt, inference_requests, loaded_models, token.clone()).await;
+    let role_result =
+        scheduler::run(role, rt, inference_requests, loaded_models, token.clone()).await;
     token.cancel();
 
     if let Err(e) = metrics_handle.await? {

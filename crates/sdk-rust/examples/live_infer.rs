@@ -39,24 +39,25 @@ async fn main() {
     .await
     .expect("failed to connect to mesh");
 
-    println!(
-        "connected! local peer: {}",
-        client.candidates().len()
-    );
+    println!("connected! local peer: {}", client.candidates().len());
 
     // 4. Check candidates
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
-    let candidates = client.candidates().eligible_for("Qwen/Qwen3-0.6B-Q8_0", now_ms);
+    let candidates = client
+        .candidates()
+        .eligible_for("Qwen/Qwen3-0.6B-Q8_0", now_ms);
     println!("candidates for Qwen/Qwen3-0.6B-Q8_0: {}", candidates.len());
 
     if candidates.is_empty() {
         println!("no candidates found — gossip may not have propagated yet");
         println!("waiting 10 more seconds...");
         tokio::time::sleep(Duration::from_secs(10)).await;
-        let candidates = client.candidates().eligible_for("Qwen/Qwen3-0.6B-Q8_0", now_ms + 10_000);
+        let candidates = client
+            .candidates()
+            .eligible_for("Qwen/Qwen3-0.6B-Q8_0", now_ms + 10_000);
         println!("candidates after wait: {}", candidates.len());
         for c in &candidates {
             println!(
