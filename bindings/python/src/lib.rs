@@ -3,6 +3,9 @@
 //! Exposes [`Wallet`] and [`Client`] to Python, wrapping the async Rust
 //! SDK with a synchronous interface backed by a per-client tokio runtime.
 
+#![allow(clippy::useless_conversion)] // PyO3 macro expansion triggers this
+#![allow(clippy::too_many_arguments)] // PyO3 method signatures mirror the Python API
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -74,9 +77,7 @@ impl Wallet {
             None => ark_sdk::wallet::Wallet::default_path().map_err(to_py_err)?,
         };
         let w = ark_sdk::wallet::Wallet::load(&p).map_err(to_py_err)?;
-        Ok(Self {
-            inner: Arc::new(w),
-        })
+        Ok(Self { inner: Arc::new(w) })
     }
 
     /// Save the wallet to disk.
@@ -297,9 +298,7 @@ impl Client {
 /// This is necessary because the Rust SDK's `Client::with_wallet` takes
 /// ownership and [`ark_sdk::wallet::Wallet`] doesn't implement Clone
 /// (signing keys are zeroize-on-drop).
-fn recreate_wallet(
-    src: &ark_sdk::wallet::Wallet,
-) -> PyResult<ark_sdk::wallet::Wallet> {
+fn recreate_wallet(src: &ark_sdk::wallet::Wallet) -> PyResult<ark_sdk::wallet::Wallet> {
     // Round-trip through a temp file (the Wallet API only exposes
     // load/save with Path). Use a secure temp directory.
     let dir = tempdir_for_wallet()?;
@@ -323,16 +322,16 @@ fn tempdir_for_wallet() -> PyResult<PathBuf> {
 
 /// Convert a [`ChatResponse`] into a Python dict.
 fn chat_response_to_py(py: Python<'_>, resp: &ark_sdk::ChatResponse) -> PyResult<PyObject> {
-    let dict = PyDict::new_bound(py);
+    let dict = PyDict::new(py);
     dict.set_item("id", &resp.id)?;
 
     let choices: Vec<PyObject> = resp
         .choices
         .iter()
         .map(|c| {
-            let d = PyDict::new_bound(py);
+            let d = PyDict::new(py);
             d.set_item("index", c.index)?;
-            let msg = PyDict::new_bound(py);
+            let msg = PyDict::new(py);
             msg.set_item("role", &c.message.role)?;
             msg.set_item("content", &c.message.content)?;
             d.set_item("message", &msg)?;
@@ -343,7 +342,7 @@ fn chat_response_to_py(py: Python<'_>, resp: &ark_sdk::ChatResponse) -> PyResult
     dict.set_item("choices", choices)?;
 
     if let Some(usage) = &resp.usage {
-        let u = PyDict::new_bound(py);
+        let u = PyDict::new(py);
         u.set_item("prompt_tokens", usage.prompt_tokens)?;
         u.set_item("completion_tokens", usage.completion_tokens)?;
         u.set_item("total_tokens", usage.total_tokens)?;
@@ -354,16 +353,13 @@ fn chat_response_to_py(py: Python<'_>, resp: &ark_sdk::ChatResponse) -> PyResult
 }
 
 /// Convert a [`ModelsResponse`] into a Python dict.
-fn models_response_to_py(
-    py: Python<'_>,
-    resp: &ark_sdk::ModelsResponse,
-) -> PyResult<PyObject> {
-    let dict = PyDict::new_bound(py);
+fn models_response_to_py(py: Python<'_>, resp: &ark_sdk::ModelsResponse) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
     let data: Vec<PyObject> = resp
         .data
         .iter()
         .map(|m| {
-            let d = PyDict::new_bound(py);
+            let d = PyDict::new(py);
             d.set_item("id", &m.id)?;
             d.set_item("owned_by", &m.owned_by)?;
             Ok(d.into_any().unbind())
