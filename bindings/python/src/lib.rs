@@ -3,6 +3,9 @@
 //! Exposes [`Wallet`] and [`Client`] to Python, wrapping the async Rust
 //! SDK with a synchronous interface backed by a per-client tokio runtime.
 
+#![allow(clippy::useless_conversion)] // PyO3 macro expansion triggers this
+#![allow(clippy::too_many_arguments)] // PyO3 method signatures mirror the Python API
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,8 +18,8 @@ use pyo3::types::PyDict;
 // Error conversion
 // ---------------------------------------------------------------------------
 
-/// Map an [`arknet_sdk::SdkError`] to a Python `RuntimeError`.
-fn to_py_err(e: arknet_sdk::SdkError) -> PyErr {
+/// Map an [`ark_sdk::SdkError`] to a Python `RuntimeError`.
+fn to_py_err(e: ark_sdk::SdkError) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
@@ -46,7 +49,7 @@ fn to_py_err(e: arknet_sdk::SdkError) -> PyErr {
 struct Wallet {
     /// The underlying Rust wallet wrapped in Arc so it can be shared
     /// with the Client (signing keys don't implement Clone).
-    inner: Arc<arknet_sdk::wallet::Wallet>,
+    inner: Arc<ark_sdk::wallet::Wallet>,
 }
 
 #[pymethods]
@@ -55,7 +58,7 @@ impl Wallet {
     #[staticmethod]
     fn create() -> Self {
         Self {
-            inner: Arc::new(arknet_sdk::wallet::Wallet::create()),
+            inner: Arc::new(ark_sdk::wallet::Wallet::create()),
         }
     }
 
@@ -71,12 +74,10 @@ impl Wallet {
     fn load(path: Option<String>) -> PyResult<Self> {
         let p = match path {
             Some(s) => PathBuf::from(s),
-            None => arknet_sdk::wallet::Wallet::default_path().map_err(to_py_err)?,
+            None => ark_sdk::wallet::Wallet::default_path().map_err(to_py_err)?,
         };
-        let w = arknet_sdk::wallet::Wallet::load(&p).map_err(to_py_err)?;
-        Ok(Self {
-            inner: Arc::new(w),
-        })
+        let w = ark_sdk::wallet::Wallet::load(&p).map_err(to_py_err)?;
+        Ok(Self { inner: Arc::new(w) })
     }
 
     /// Save the wallet to disk.
@@ -91,7 +92,7 @@ impl Wallet {
     fn save(&self, path: Option<String>) -> PyResult<()> {
         let p = match path {
             Some(s) => PathBuf::from(s),
-            None => arknet_sdk::wallet::Wallet::default_path().map_err(to_py_err)?,
+            None => ark_sdk::wallet::Wallet::default_path().map_err(to_py_err)?,
         };
         self.inner.save(&p).map_err(to_py_err)
     }
@@ -136,7 +137,7 @@ impl Wallet {
 /// ```
 #[pyclass]
 struct Client {
-    inner: arknet_sdk::Client,
+    inner: ark_sdk::Client,
     rt: Arc<tokio::runtime::Runtime>,
 }
 
@@ -158,7 +159,7 @@ impl Client {
             .build()
             .map_err(|e| PyRuntimeError::new_err(format!("failed to build tokio runtime: {e}")))?;
 
-        let mut client = arknet_sdk::Client::new(base_url).map_err(to_py_err)?;
+        let mut client = ark_sdk::Client::new(base_url).map_err(to_py_err)?;
         if let Some(w) = wallet {
             // Re-create the wallet from the same seed bytes so the Rust
             // SDK can take ownership.  We go through save/load via an
@@ -193,14 +194,14 @@ impl Client {
             None => None,
         };
 
-        let opts = arknet_sdk::ConnectOptions {
+        let opts = ark_sdk::ConnectOptions {
             require_https: require_https.unwrap_or(false),
             wallet: owned_wallet,
             ..Default::default()
         };
 
         let client = rt
-            .block_on(arknet_sdk::Client::connect(opts))
+            .block_on(ark_sdk::Client::connect(opts))
             .map_err(to_py_err)?;
 
         Ok(Self {
@@ -244,15 +245,15 @@ impl Client {
         prefer_tee: Option<bool>,
         require_https: Option<bool>,
     ) -> PyResult<PyObject> {
-        let msgs: Vec<arknet_sdk::Message> = messages
+        let msgs: Vec<ark_sdk::Message> = messages
             .into_iter()
-            .map(|m| arknet_sdk::Message {
+            .map(|m| ark_sdk::Message {
                 role: m.get("role").cloned().unwrap_or_default(),
                 content: m.get("content").cloned().unwrap_or_default(),
             })
             .collect();
 
-        let req = arknet_sdk::ChatRequest {
+        let req = ark_sdk::ChatRequest {
             model: model.to_string(),
             messages: msgs,
             max_tokens,
@@ -291,21 +292,19 @@ impl Client {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Recreate a [`arknet_sdk::wallet::Wallet`] by exporting the signing key
+/// Recreate a [`ark_sdk::wallet::Wallet`] by exporting the signing key
 /// material from the Arc'd wallet and re-importing it.
 ///
 /// This is necessary because the Rust SDK's `Client::with_wallet` takes
-/// ownership and [`arknet_sdk::wallet::Wallet`] doesn't implement Clone
+/// ownership and [`ark_sdk::wallet::Wallet`] doesn't implement Clone
 /// (signing keys are zeroize-on-drop).
-fn recreate_wallet(
-    src: &arknet_sdk::wallet::Wallet,
-) -> PyResult<arknet_sdk::wallet::Wallet> {
+fn recreate_wallet(src: &ark_sdk::wallet::Wallet) -> PyResult<ark_sdk::wallet::Wallet> {
     // Round-trip through a temp file (the Wallet API only exposes
     // load/save with Path). Use a secure temp directory.
     let dir = tempdir_for_wallet()?;
     let path = dir.join("_pyo3_tmp.key");
     src.save(&path).map_err(to_py_err)?;
-    let w = arknet_sdk::wallet::Wallet::load(&path).map_err(to_py_err)?;
+    let w = ark_sdk::wallet::Wallet::load(&path).map_err(to_py_err)?;
     // Best-effort cleanup.
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&dir);
@@ -322,7 +321,7 @@ fn tempdir_for_wallet() -> PyResult<PathBuf> {
 }
 
 /// Convert a [`ChatResponse`] into a Python dict.
-fn chat_response_to_py(py: Python<'_>, resp: &arknet_sdk::ChatResponse) -> PyResult<PyObject> {
+fn chat_response_to_py(py: Python<'_>, resp: &ark_sdk::ChatResponse) -> PyResult<PyObject> {
     let dict = PyDict::new(py);
     dict.set_item("id", &resp.id)?;
 
@@ -354,10 +353,7 @@ fn chat_response_to_py(py: Python<'_>, resp: &arknet_sdk::ChatResponse) -> PyRes
 }
 
 /// Convert a [`ModelsResponse`] into a Python dict.
-fn models_response_to_py(
-    py: Python<'_>,
-    resp: &arknet_sdk::ModelsResponse,
-) -> PyResult<PyObject> {
+fn models_response_to_py(py: Python<'_>, resp: &ark_sdk::ModelsResponse) -> PyResult<PyObject> {
     let dict = PyDict::new(py);
     let data: Vec<PyObject> = resp
         .data

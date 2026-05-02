@@ -22,6 +22,30 @@ members = [
     "crates/light-client",
     "crates/sdk-rust",
     "crates/cli",
+    "bindings/python",
+]
+default-members = [
+    "crates/common",
+    "crates/crypto",
+    "crates/network",
+    "crates/consensus",
+    "crates/chain",
+    "crates/staking",
+    "crates/governance",
+    "crates/treasury",
+    "crates/model-manager",
+    "crates/inference",
+    "crates/router",
+    "crates/compute",
+    "crates/verifier",
+    "crates/validator",
+    "crates/receipts",
+    "crates/payments",
+    "crates/rpc",
+    "crates/node",
+    "crates/light-client",
+    "crates/sdk-rust",
+    "crates/cli",
 ]
 
 [workspace.package]

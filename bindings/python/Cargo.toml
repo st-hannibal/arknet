@@ -12,9 +12,9 @@ name        = "arknet_sdk"
 crate-type  = ["cdylib"]
 
 [dependencies]
-arknet-sdk    = { path = "../../crates/sdk-rust" }
+ark-sdk       = { path = "../../crates/sdk-rust", package = "arknet-sdk" }
 arknet-common = { path = "../../crates/common" }
-pyo3          = { version = "0.22", features = ["extension-module"] }
+pyo3          = { version = "0.24", features = ["extension-module"] }
 tokio         = { version = "1.38", features = ["full"] }
 serde_json    = "1.0"
 hex           = "0.4"
