@@ -94,9 +94,14 @@ pub fn register_self_as_candidate(
 /// Drive the compute role until shutdown. If `inference_requests` is
 /// provided, the compute node handles incoming p2p inference requests
 /// from remote routers.
+/// Shared list of loaded models, updated by the RPC model-load handler
+/// and read by the heartbeat to re-gossip PoolOffers.
+pub type LoadedModels = Arc<parking_lot::Mutex<Vec<String>>>;
+
 pub async fn run(
     rt: NodeRuntime,
     mut inference_requests: Option<mpsc::Receiver<InboundInferenceRequest>>,
+    loaded_models: LoadedModels,
     shutdown: CancellationToken,
 ) -> Result<()> {
     let Some(runner) = rt.compute.clone() else {
@@ -106,11 +111,24 @@ pub async fn run(
     };
     info!("compute role online — awaiting shutdown");
 
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(60));
+    heartbeat.tick().await;
+
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 info!("compute role shutting down cleanly");
                 return Ok(());
+            }
+            _ = heartbeat.tick() => {
+                let models = loaded_models.lock().clone();
+                if !models.is_empty() {
+                    if let Some(net) = &rt.network {
+                        let operator = local_operator(&rt.data_dir);
+                        let tee = rt.cfg.tee.enabled;
+                        announce_models(net, models, operator, tee).await;
+                    }
+                }
             }
             Some(inbound) = async {
                 match inference_requests.as_mut() {

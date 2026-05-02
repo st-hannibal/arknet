@@ -54,6 +54,9 @@ pub struct RpcState {
     /// replaces this entirely.
     manifests: Arc<Mutex<HashMap<String, ModelManifest>>>,
     started: Instant,
+    /// Shared with the compute role heartbeat so it knows which models
+    /// to re-announce on gossip.
+    loaded_models: Option<crate::compute_role::LoadedModels>,
 }
 
 impl RpcState {
@@ -62,7 +65,14 @@ impl RpcState {
             runtime,
             manifests: Arc::new(Mutex::new(HashMap::new())),
             started: Instant::now(),
+            loaded_models: None,
         }
+    }
+
+    /// Attach the shared loaded-models list for heartbeat gossip.
+    pub fn with_loaded_models(mut self, models: crate::compute_role::LoadedModels) -> Self {
+        self.loaded_models = Some(models);
+        self
     }
 
     fn register_manifest(&self, model_ref: &ModelRef, manifest: ModelManifest) {
@@ -223,8 +233,11 @@ async fn do_load(state: &RpcState, req: LoadRequest) -> Result<LoadResponse> {
     let runtime = temp_runtime_with_manifest(state, &model_ref, manifest).await?;
     let handle = runtime.inference.load(&model_ref).await?;
 
+    let model_refs: Vec<String> = state.manifests.lock().keys().cloned().collect();
+    if let Some(lm) = &state.loaded_models {
+        *lm.lock() = model_refs.clone();
+    }
     if let Some(network) = state.runtime.network.as_ref() {
-        let model_refs: Vec<String> = state.manifests.lock().keys().cloned().collect();
         let operator = crate::compute_role::local_operator(&state.runtime.data_dir);
         let supports_tee = state.runtime.cfg.tee.enabled;
         crate::compute_role::announce_models(network, model_refs, operator, supports_tee).await;

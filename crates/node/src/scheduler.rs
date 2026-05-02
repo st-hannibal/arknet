@@ -59,12 +59,13 @@ pub async fn run(
     role: Role,
     rt: NodeRuntime,
     inference_requests: Option<mpsc::Receiver<InboundInferenceRequest>>,
+    loaded_models: crate::compute_role::LoadedModels,
     shutdown: CancellationToken,
 ) -> Result<()> {
     match role {
         Role::Compute => {
             if rt.compute.is_some() {
-                crate::compute_role::run(rt, inference_requests, shutdown).await
+                crate::compute_role::run(rt, inference_requests, loaded_models, shutdown).await
             } else {
                 run_compute(rt, shutdown).await
             }
@@ -172,7 +173,8 @@ mod tests {
             .unwrap();
         let shutdown = CancellationToken::new();
 
-        let err = run(Role::Verifier, rt, None, shutdown).await.unwrap_err();
+        let lm = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let err = run(Role::Verifier, rt, None, lm, shutdown).await.unwrap_err();
         assert!(matches!(err, NodeError::Config(_)));
     }
 
@@ -184,7 +186,8 @@ mod tests {
             .await
             .unwrap();
         let shutdown = CancellationToken::new();
-        let err = run(Role::Validator, rt, None, shutdown).await.unwrap_err();
+        let lm = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let err = run(Role::Validator, rt, None, lm, shutdown).await.unwrap_err();
         assert!(matches!(err, NodeError::Config(_)));
     }
 

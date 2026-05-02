@@ -81,6 +81,9 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
         None
     };
 
+    let loaded_models: crate::compute_role::LoadedModels =
+        std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+
     let mut inference_requests = None;
 
     if role == Role::Compute {
@@ -111,14 +114,14 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
             .rpc_listen
             .parse()
             .map_err(|e| NodeError::Config(format!("rpc_listen: {e}")))?;
-        let state = rpc::RpcState::new(rt.clone());
+        let state = rpc::RpcState::new(rt.clone()).with_loaded_models(loaded_models.clone());
         let token_for_rpc = token.clone();
         tokio::spawn(async move { rpc::serve(bind, state, token_for_rpc).await })
     };
 
     // Drive the role. When it exits, request shutdown so the servers
     // come down with it.
-    let role_result = scheduler::run(role, rt, inference_requests, token.clone()).await;
+    let role_result = scheduler::run(role, rt, inference_requests, loaded_models, token.clone()).await;
     token.cancel();
 
     if let Err(e) = metrics_handle.await? {
