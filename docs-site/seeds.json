@@ -1,11 +1,10 @@
 {
-  "version": 1,
+  "version": 2,
   "chain_id": "arknet-1",
   "seeds": [
     {
-      "url": "https://api.arknet.arkengel.com",
-      "operator": "st-hannibal",
-      "https": true
+      "multiaddr": "/ip4/63.181.188.155/tcp/26656/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f",
+      "operator": "st-hannibal"
     }
   ]
 }

@@ -322,7 +322,6 @@ fn epoch_boundary_mint(
         for (addr, amount) in [
             (&pr.compute_addr, dist.compute),
             (&pr.verifier_addr, dist.verifier),
-            (&pr.router_addr, dist.router),
             (&pr.treasury_addr, dist.treasury),
         ] {
             if amount > 0 {

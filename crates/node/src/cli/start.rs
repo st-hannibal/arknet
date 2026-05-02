@@ -15,7 +15,6 @@ use crate::hardware::HardwareReport;
 use crate::metrics;
 use crate::network_boot;
 use crate::paths;
-use crate::router_role;
 use crate::rpc;
 use crate::runtime::{shutdown, NodeRuntime};
 use crate::scheduler::{self, Role};
@@ -84,20 +83,6 @@ pub async fn run(args: StartArgs, data_dir: Option<&Path>) -> Result<()> {
 
     let mut inference_requests = None;
 
-    // Validators and routers need a Router to forward inference requests
-    // to remote compute nodes. Wire up pool_offer gossip ingestion.
-    if role == Role::Router || role == Role::Validator {
-        let router = router_role::build_router();
-        let response_rx =
-            std::sync::Arc::new(tokio::sync::Mutex::new(inference_channels.responses));
-        router_role::start_gossip_listener(
-            network_handle.clone(),
-            router.registry().clone(),
-            response_rx,
-            token.clone(),
-        );
-        rt = rt.with_router(router);
-    }
     if role == Role::Compute {
         let runner = arknet_compute::ComputeJobRunner::new(rt.inference.clone());
         rt = rt.with_compute(runner);

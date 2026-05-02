@@ -815,23 +815,20 @@ fn credit_reward_split(
     total: Amount,
     compute_addr: &Address,
     verifier_addr: &Address,
-    router_addr: &Address,
+    _router_addr: &Address,
     treasury_addr: &Address,
 ) -> Result<()> {
-    let compute = total * 75 / 100;
+    let compute = total * 80 / 100;
     let verifier = total * 7 / 100;
-    let router = total * 5 / 100;
     let burned = total * 3 / 100;
     let delegators = total * 5 / 100;
-    let treasury = total - compute - verifier - router - burned - delegators;
+    let treasury = total - compute - verifier - burned - delegators;
 
-    // Compute + delegators (simplified: all to compute for now).
     let compute_total = compute + delegators;
 
     for (addr, amount) in [
         (compute_addr, compute_total),
         (verifier_addr, verifier),
-        (router_addr, router),
         (treasury_addr, treasury),
     ] {
         if amount > 0 {
@@ -840,7 +837,6 @@ fn credit_reward_split(
             ctx.set_account(addr, &acct)?;
         }
     }
-    // `burned` is intentionally not credited anywhere.
     Ok(())
 }
 

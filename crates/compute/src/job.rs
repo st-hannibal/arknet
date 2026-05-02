@@ -136,7 +136,7 @@ impl ComputeJobRunner {
                 "stale request (clock skew)".into(),
             ));
         }
-        let user_addr = req.derived_user_address();
+        let user_addr = req.billing_address();
         if !self.nonces.lock().insert(user_addr.0, req.nonce) {
             return Err(ComputeError::BadRequest("replayed nonce".into()));
         }

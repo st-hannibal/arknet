@@ -71,6 +71,22 @@ impl NetworkConfig {
         }
         Ok(())
     }
+
+    /// SDK-friendly defaults: random listen port, no inbound, no peer book.
+    pub fn sdk_defaults(network_id: &str, bootstrap_peers: Vec<Multiaddr>) -> Self {
+        Self {
+            network_id: network_id.into(),
+            listen_addrs: vec!["/ip4/0.0.0.0/udp/0/quic-v1"
+                .parse()
+                .expect("valid multiaddr")],
+            external_addr: None,
+            bootstrap_peers,
+            peer_book_path: std::env::temp_dir()
+                .join(format!("arknet-sdk-peers-{}.json", std::process::id())),
+            max_inbound_peers: 0,
+            max_outbound_peers: 20,
+        }
+    }
 }
 
 /// Parse a `Vec<String>` of multiaddrs into a `Vec<Multiaddr>`.

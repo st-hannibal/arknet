@@ -175,6 +175,7 @@ mod tests {
             signature: Signature::ed25519([0; 64]),
             prefer_tee: false,
             encrypted_prompt: None,
+            delegation: None,
         }
     }
 

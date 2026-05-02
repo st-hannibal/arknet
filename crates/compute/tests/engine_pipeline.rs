@@ -124,6 +124,7 @@ fn request_for(prompt: &str, nonce: u64) -> InferenceJobRequest {
         signature: Signature::ed25519([0; 64]),
         prefer_tee: false,
         encrypted_prompt: None,
+        delegation: None,
     }
 }
 
@@ -150,6 +151,9 @@ async fn collect_text(
             }
             InferenceJobEvent::Error { message, .. } => {
                 panic!("unexpected inflight error: {message}");
+            }
+            InferenceJobEvent::Busy { .. } => {
+                panic!("unexpected busy response in test");
             }
         }
     }

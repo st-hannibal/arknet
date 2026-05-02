@@ -31,6 +31,9 @@ fn fund(state: &State, addr: Address, balance: u128) {
     ctx.commit().unwrap();
 }
 
+/// Burn address for the removed router role.
+const ROUTER_BURN: Address = Address::new([0; 20]);
+
 #[test]
 fn escrow_lock_debits_user() {
     let (_tmp, state) = tmp_state();
@@ -61,13 +64,11 @@ fn escrow_settle_distributes_to_recipients() {
     let user = Address::new([1; 20]);
     let compute = Address::new([2; 20]);
     let verifier = Address::new([3; 20]);
-    let router = Address::new([4; 20]);
     let treasury = Address::new([5; 20]);
     let job = JobId::new([42; 32]);
 
     fund(&state, user, 10_000_000);
 
-    // Lock escrow.
     {
         let stx = sign(Transaction::EscrowLock {
             from: user,
@@ -82,14 +83,13 @@ fn escrow_settle_distributes_to_recipients() {
         ctx.commit().unwrap();
     }
 
-    // Settle escrow.
     {
         let stx = sign(Transaction::EscrowSettle {
             job_id: job,
             batch_id: [0; 32],
             compute_addr: compute,
             verifier_addr: verifier,
-            router_addr: router,
+            router_addr: ROUTER_BURN,
             treasury_addr: treasury,
         });
         let mut ctx = state.begin_block();
@@ -98,21 +98,19 @@ fn escrow_settle_distributes_to_recipients() {
         ctx.commit().unwrap();
     }
 
-    // Check balances: 75+5=80% to compute (delegators go to compute
-    // in Phase 1), 7% verifier, 5% router, 5% treasury, 3% burned.
+    // 80% compute+delegators, 7% verifier, 5% treasury, 3% burned.
+    // Router gets 0 (burn address, no router role).
     let c = state.get_account(&compute).unwrap().unwrap();
     let v = state.get_account(&verifier).unwrap().unwrap();
-    let r = state.get_account(&router).unwrap().unwrap();
     let t = state.get_account(&treasury).unwrap().unwrap();
 
-    assert_eq!(c.balance, 800_000, "compute+delegators = 80%");
+    // compute = 80%, delegators = 5% (all go to compute for now) = 85%.
+    assert_eq!(c.balance, 850_000, "compute+delegators = 85%");
     assert_eq!(v.balance, 70_000, "verifier = 7%");
-    assert_eq!(r.balance, 50_000, "router = 5%");
-    // Treasury gets remainder (5% + rounding).
-    assert_eq!(t.balance, 1_000_000 - 800_000 - 70_000 - 50_000 - 30_000);
-    // 3% burned = 30_000 → nobody's balance.
-    let total_credited = c.balance + v.balance + r.balance + t.balance;
-    assert_eq!(total_credited + 30_000, 1_000_000);
+    let burned = 30_000u128;
+    assert_eq!(t.balance, 1_000_000 - 850_000 - 70_000 - burned);
+    let total_credited = c.balance + v.balance + t.balance;
+    assert_eq!(total_credited + burned, 1_000_000);
 }
 
 #[test]
@@ -120,7 +118,6 @@ fn reward_mint_credits_recipients() {
     let (_tmp, state) = tmp_state();
     let compute = Address::new([2; 20]);
     let verifier = Address::new([3; 20]);
-    let router = Address::new([4; 20]);
     let treasury = Address::new([5; 20]);
     let job = JobId::new([77; 32]);
 
@@ -129,7 +126,7 @@ fn reward_mint_credits_recipients() {
         total_reward: 2_000_000,
         compute_addr: compute,
         verifier_addr: verifier,
-        router_addr: router,
+        router_addr: ROUTER_BURN,
         treasury_addr: treasury,
         output_tokens: 100,
     });
@@ -141,18 +138,13 @@ fn reward_mint_credits_recipients() {
 
     let c = state.get_account(&compute).unwrap().unwrap();
     let v = state.get_account(&verifier).unwrap().unwrap();
-    let r = state.get_account(&router).unwrap().unwrap();
     let t = state.get_account(&treasury).unwrap().unwrap();
 
-    // Same 75+5/7/5/5/3 split on 2M.
-    assert_eq!(c.balance, 1_600_000);
+    // 80+5/7/5/3 split on 2M (compute+delegators = 85%).
+    assert_eq!(c.balance, 1_700_000);
     assert_eq!(v.balance, 140_000);
-    assert_eq!(r.balance, 100_000);
     let burned = 60_000u128;
-    assert_eq!(
-        c.balance + v.balance + r.balance + t.balance + burned,
-        2_000_000
-    );
+    assert_eq!(c.balance + v.balance + t.balance + burned, 2_000_000);
 }
 
 #[test]
@@ -162,7 +154,6 @@ fn double_escrow_same_job_rejected() {
     fund(&state, user, 10_000_000);
     let job = JobId::new([11; 32]);
 
-    // First lock — accepted.
     {
         let stx = sign(Transaction::EscrowLock {
             from: user,
@@ -177,7 +168,6 @@ fn double_escrow_same_job_rejected() {
         ctx.commit().unwrap();
     }
 
-    // Second lock same job — rejected.
     {
         let stx = sign(Transaction::EscrowLock {
             from: user,

@@ -66,6 +66,11 @@ pub struct InferenceJobRequest {
     /// the prompt is encrypted to the enclave's pubkey and sent here
     /// instead of in `prompt`. The `prompt` field is empty in this case.
     pub encrypted_prompt: Option<EncryptedEnvelope>,
+    /// Session key delegation certificate. When present, `user_pubkey`
+    /// is the session key and `signature` is signed by that session key.
+    /// The compute node verifies the delegation chain back to the main
+    /// wallet for billing.
+    pub delegation: Option<DelegationCert>,
 }
 
 /// Derived user address = `blake3(pubkey.bytes)[0..20]`.
@@ -115,6 +120,11 @@ pub enum InferenceJobEvent {
         job_id: JobId,
         /// Error message (opaque; for logging, not consensus).
         message: String,
+    },
+    /// Compute node is at capacity — SDK should try the next candidate.
+    Busy {
+        /// Job this event belongs to.
+        job_id: JobId,
     },
 }
 
@@ -174,6 +184,8 @@ pub struct InferenceRequestSigningBody<'a> {
     pub prefer_tee: bool,
     /// Encrypted prompt (if present).
     pub encrypted_prompt: &'a Option<EncryptedEnvelope>,
+    /// Delegation certificate (if present).
+    pub delegation: &'a Option<DelegationCert>,
 }
 
 /// Domain tag for inference-request signatures. Never reused by any
@@ -198,23 +210,110 @@ impl InferenceJobRequest {
             user_pubkey: &self.user_pubkey,
             prefer_tee: self.prefer_tee,
             encrypted_prompt: &self.encrypted_prompt,
+            delegation: &self.delegation,
         };
         borsh::to_vec(&body).expect("borsh encoding of signing body is infallible")
     }
 
-    /// Borsh-encoded address derived from `user_pubkey`.
-    pub fn derived_user_address(&self) -> Address {
-        derive_user_address(&self.user_pubkey)
+    /// The billing address for this request. When a delegation cert is
+    /// present the main wallet pays; otherwise the direct signer pays.
+    pub fn billing_address(&self) -> Address {
+        match &self.delegation {
+            Some(cert) => cert.main_wallet_address,
+            None => derive_user_address(&self.user_pubkey),
+        }
     }
 }
 
+// ---------------------------------------------------------------------------
+// Session key delegation
+// ---------------------------------------------------------------------------
+
+/// Domain tag for delegation certificate signatures.
+pub const DELEGATION_DOMAIN: &[u8] = b"arknet-session-delegation-v1";
+
+/// A delegation certificate authorizing a session key to act on behalf
+/// of a main wallet, with spending and time constraints.
+///
+/// The main wallet signs this once; the session key uses it for every
+/// inference request. If the session key leaks, the attacker can only
+/// spend up to `spending_limit` and only until `expiry_ms`.
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+pub struct DelegationCert {
+    /// The session key's Ed25519 public key.
+    pub session_pubkey: PubKey,
+    /// Maximum spending allowed by this session (ark_atom).
+    pub spending_limit: u128,
+    /// Unix ms after which this delegation is invalid.
+    pub expiry_ms: Timestamp,
+    /// The main wallet's on-chain address.
+    pub main_wallet_address: Address,
+    /// The main wallet's public key (needed for sig verification).
+    pub main_wallet_pubkey: PubKey,
+    /// Signature by the main wallet over [`DelegationSigningBody`].
+    pub main_wallet_signature: Signature,
+}
+
+/// Deterministic signing body for [`DelegationCert`].
+#[derive(Clone, Debug, BorshSerialize)]
+pub struct DelegationSigningBody<'a> {
+    /// Domain separator.
+    pub domain: &'a [u8],
+    /// Session public key being authorized.
+    pub session_pubkey: &'a PubKey,
+    /// Spending cap (ark_atom).
+    pub spending_limit: u128,
+    /// Expiry timestamp (unix ms).
+    pub expiry_ms: Timestamp,
+    /// Main wallet address.
+    pub main_wallet_address: &'a Address,
+}
+
+impl DelegationCert {
+    /// Bytes the main wallet must sign to produce `main_wallet_signature`.
+    pub fn signing_bytes(&self) -> Vec<u8> {
+        let body = DelegationSigningBody {
+            domain: DELEGATION_DOMAIN,
+            session_pubkey: &self.session_pubkey,
+            spending_limit: self.spending_limit,
+            expiry_ms: self.expiry_ms,
+            main_wallet_address: &self.main_wallet_address,
+        };
+        borsh::to_vec(&body).expect("borsh encoding of delegation body is infallible")
+    }
+}
+
+/// Verify a delegation certificate: signature valid, not expired,
+/// address matches pubkey.
+pub fn verify_delegation(cert: &DelegationCert, now_ms: Timestamp) -> Result<(), String> {
+    if now_ms > cert.expiry_ms {
+        return Err(format!(
+            "delegation expired: now={now_ms} > expiry={}",
+            cert.expiry_ms
+        ));
+    }
+    let expected_addr = derive_user_address(&cert.main_wallet_pubkey);
+    if expected_addr != cert.main_wallet_address {
+        return Err("delegation: main_wallet_address does not match main_wallet_pubkey".into());
+    }
+    let signing_bytes = cert.signing_bytes();
+    arknet_crypto::signatures::verify(
+        &cert.main_wallet_pubkey,
+        &signing_bytes,
+        &cert.main_wallet_signature,
+    )
+    .map_err(|e| format!("delegation signature invalid: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Pool offer
+// ---------------------------------------------------------------------------
+
 /// Gossip message for `arknet/pool/offer/1`. A compute node publishes
-/// this when it loads or unloads a model so routers can update their
-/// candidate registries.
+/// this when it loads or unloads a model so the mesh can discover it.
 #[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 pub struct PoolOffer {
-    /// libp2p PeerId as bytes — routers map this to a PeerId for p2p
-    /// request-response dispatch.
+    /// libp2p PeerId as bytes.
     pub peer_id: Vec<u8>,
     /// Canonical model refs this compute node currently serves.
     pub model_refs: Vec<String>,
@@ -224,8 +323,10 @@ pub struct PoolOffer {
     pub total_stake: u128,
     /// TEE capability flag.
     pub supports_tee: bool,
-    /// Unix millis — routers use freshness to expire stale offers.
+    /// Unix millis — consumers use freshness to expire stale offers.
     pub timestamp_ms: Timestamp,
+    /// How many concurrent inference slots are available right now.
+    pub available_slots: u32,
 }
 
 #[cfg(test)]
@@ -248,6 +349,7 @@ mod tests {
             signature: Signature::ed25519([0x22; 64]),
             prefer_tee: false,
             encrypted_prompt: None,
+            delegation: None,
         }
     }
 
@@ -340,7 +442,116 @@ mod tests {
 
     #[test]
     fn signature_scheme_sanity() {
-        // Ed25519 is the only active scheme at genesis.
         assert!(SignatureScheme::Ed25519.is_active());
+    }
+
+    #[test]
+    fn delegation_cert_borsh_roundtrip() {
+        let cert = DelegationCert {
+            session_pubkey: PubKey::ed25519([0xAA; 32]),
+            spending_limit: 1_000_000_000,
+            expiry_ms: 1_800_000_000_000,
+            main_wallet_address: Address::new([0xBB; 20]),
+            main_wallet_pubkey: PubKey::ed25519([0xCC; 32]),
+            main_wallet_signature: Signature::ed25519([0xDD; 64]),
+        };
+        let bytes = borsh::to_vec(&cert).unwrap();
+        let back: DelegationCert = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(cert, back);
+    }
+
+    #[test]
+    fn delegation_signing_bytes_deterministic() {
+        let cert = DelegationCert {
+            session_pubkey: PubKey::ed25519([0xAA; 32]),
+            spending_limit: 500,
+            expiry_ms: 9999,
+            main_wallet_address: Address::new([0x01; 20]),
+            main_wallet_pubkey: PubKey::ed25519([0x02; 32]),
+            main_wallet_signature: Signature::ed25519([0x00; 64]),
+        };
+        assert_eq!(cert.signing_bytes(), cert.signing_bytes());
+    }
+
+    #[test]
+    fn delegation_signing_bytes_contain_domain() {
+        let cert = DelegationCert {
+            session_pubkey: PubKey::ed25519([0xAA; 32]),
+            spending_limit: 1,
+            expiry_ms: 1,
+            main_wallet_address: Address::new([0x00; 20]),
+            main_wallet_pubkey: PubKey::ed25519([0x00; 32]),
+            main_wallet_signature: Signature::ed25519([0x00; 64]),
+        };
+        let bytes = cert.signing_bytes();
+        assert!(
+            bytes
+                .windows(DELEGATION_DOMAIN.len())
+                .any(|w| w == DELEGATION_DOMAIN),
+            "domain tag must be present"
+        );
+    }
+
+    #[test]
+    fn delegation_field_affects_signing_bytes() {
+        let mut r = sample();
+        let without = r.signing_bytes();
+        r.delegation = Some(DelegationCert {
+            session_pubkey: PubKey::ed25519([0xAA; 32]),
+            spending_limit: 100,
+            expiry_ms: 9999,
+            main_wallet_address: Address::new([0x01; 20]),
+            main_wallet_pubkey: PubKey::ed25519([0x02; 32]),
+            main_wallet_signature: Signature::ed25519([0x00; 64]),
+        });
+        let with = r.signing_bytes();
+        assert_ne!(without, with, "delegation must affect signing bytes");
+    }
+
+    #[test]
+    fn billing_address_uses_main_wallet_when_delegated() {
+        let main_addr = Address::new([0xFF; 20]);
+        let mut r = sample();
+        r.delegation = Some(DelegationCert {
+            session_pubkey: r.user_pubkey.clone(),
+            spending_limit: 100,
+            expiry_ms: 9999,
+            main_wallet_address: main_addr,
+            main_wallet_pubkey: PubKey::ed25519([0x02; 32]),
+            main_wallet_signature: Signature::ed25519([0x00; 64]),
+        });
+        assert_eq!(r.billing_address(), main_addr);
+    }
+
+    #[test]
+    fn billing_address_uses_signer_when_no_delegation() {
+        let r = sample();
+        assert_eq!(r.billing_address(), derive_user_address(&r.user_pubkey));
+    }
+
+    #[test]
+    fn pool_offer_borsh_roundtrip() {
+        let offer = PoolOffer {
+            peer_id: vec![0x01; 38],
+            model_refs: vec!["test/model".into()],
+            operator: Address::new([0x10; 20]),
+            total_stake: 42,
+            supports_tee: false,
+            timestamp_ms: 1_000,
+            available_slots: 3,
+        };
+        let bytes = borsh::to_vec(&offer).unwrap();
+        let back: PoolOffer = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(offer, back);
+    }
+
+    #[test]
+    fn busy_event_borsh_roundtrip() {
+        let ev = InferenceJobEvent::Busy {
+            job_id: JobId::new([0x55; 32]),
+        };
+        let bytes = borsh::to_vec(&ev).unwrap();
+        let back: InferenceJobEvent = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(ev, back);
     }
 }

@@ -92,8 +92,6 @@ pub async fn serve(bind: SocketAddr, state: RpcState, shutdown: CancellationToke
         .route("/v1/status", get(status))
         .route("/v1/account/:address", get(get_account))
         .route("/v1/tx", post(submit_tx))
-        .route("/v1/bootstrap", get(bootstrap_status))
-        .route("/v1/candidates/:model", get(list_candidates))
         .route("/v1/gateways", get(list_gateways))
         .route("/v1/block/:height", get(get_block))
         .route("/v1/tx/:hash", get(get_tx))

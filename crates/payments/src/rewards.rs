@@ -12,11 +12,9 @@
 use arknet_common::types::{Address, Amount};
 
 /// Reward split percentages (sum = 100).
-pub const COMPUTE_PERCENT: u128 = 75;
+pub const COMPUTE_PERCENT: u128 = 80;
 /// Verifier cut.
 pub const VERIFIER_PERCENT: u128 = 7;
-/// Router cut.
-pub const ROUTER_PERCENT: u128 = 5;
 /// Treasury cut.
 pub const TREASURY_PERCENT: u128 = 5;
 /// Burned (deflationary).
@@ -118,15 +116,13 @@ pub fn compute_block_reward(
     base.saturating_mul(sm) / 10_000 * cm / 10_000 * lm / 10_000 * um / 10_000
 }
 
-/// The six-way reward distribution.
+/// The five-way reward distribution (router removed in v1.0.8).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RewardDistribution {
     /// Amount to the compute node operator.
     pub compute: Amount,
     /// Amount to the verifier that checked the receipt.
     pub verifier: Amount,
-    /// Amount to the router that dispatched the job.
-    pub router: Amount,
     /// Amount to the protocol treasury.
     pub treasury: Amount,
     /// Amount burned (dropped from supply).
@@ -138,25 +134,22 @@ pub struct RewardDistribution {
 impl RewardDistribution {
     /// Total across all six recipients.
     pub fn total(&self) -> Amount {
-        self.compute + self.verifier + self.router + self.treasury + self.burned + self.delegators
+        self.compute + self.verifier + self.treasury + self.burned + self.delegators
     }
 }
 
-/// Split `total_value` (user payment + block reward) into six
+/// Split `total_value` (user payment + block reward) into five
 /// recipient buckets. Remainder from rounding goes to treasury.
 pub fn distribute_reward(total_value: Amount) -> RewardDistribution {
     let compute = total_value * COMPUTE_PERCENT / 100;
     let verifier = total_value * VERIFIER_PERCENT / 100;
-    let router = total_value * ROUTER_PERCENT / 100;
     let burned = total_value * BURN_PERCENT / 100;
     let delegators = total_value * DELEGATOR_PERCENT / 100;
-    // Treasury gets the remainder so all six sum to exactly total_value.
-    let treasury = total_value - compute - verifier - router - burned - delegators;
+    let treasury = total_value - compute - verifier - burned - delegators;
 
     RewardDistribution {
         compute,
         verifier,
-        router,
         treasury,
         burned,
         delegators,
@@ -174,13 +167,11 @@ pub fn credit_rewards(
     dist: &RewardDistribution,
     compute_addr: &Address,
     verifier_addr: &Address,
-    router_addr: &Address,
     treasury_addr: &Address,
 ) -> std::result::Result<(), arknet_chain::ChainError> {
     for (addr, amount) in [
         (compute_addr, dist.compute),
         (verifier_addr, dist.verifier),
-        (router_addr, dist.router),
         (treasury_addr, dist.treasury),
     ] {
         if amount > 0 {
@@ -189,8 +180,6 @@ pub fn credit_rewards(
             ctx.set_account(addr, &acct)?;
         }
     }
-    // `dist.burned` is intentionally not credited anywhere.
-    // `dist.delegators` is handled by the caller (pro-rata split).
     Ok(())
 }
 
@@ -203,7 +192,6 @@ mod tests {
         assert_eq!(
             COMPUTE_PERCENT
                 + VERIFIER_PERCENT
-                + ROUTER_PERCENT
                 + TREASURY_PERCENT
                 + BURN_PERCENT
                 + DELEGATOR_PERCENT,
@@ -220,9 +208,9 @@ mod tests {
     }
 
     #[test]
-    fn compute_gets_75_percent() {
+    fn compute_gets_80_percent() {
         let d = distribute_reward(1_000_000);
-        assert_eq!(d.compute, 750_000);
+        assert_eq!(d.compute, 800_000);
     }
 
     #[test]

@@ -18,7 +18,8 @@ use std::sync::Arc;
 use arknet_common::types::{Address, JobId, SignatureScheme, Timestamp};
 use arknet_compute::free_tier::{FreeTierTracker, QuotaOutcome};
 use arknet_compute::wire::{
-    InferenceJobEvent, InferenceJobRequest, INFERENCE_REQUEST_DOMAIN, REQUEST_MAX_SKEW_MS,
+    verify_delegation, InferenceJobEvent, InferenceJobRequest, INFERENCE_REQUEST_DOMAIN,
+    REQUEST_MAX_SKEW_MS,
 };
 use arknet_crypto::signatures::verify;
 use parking_lot::Mutex;
@@ -90,7 +91,7 @@ impl Router {
         }
 
         verify_request(&req, now_ms)?;
-        let user_addr = req.derived_user_address();
+        let user_addr = req.billing_address();
 
         if policy == QuotaPolicy::Enforce {
             match self.quotas.lock().consume(&user_addr, now_ms) {
@@ -179,9 +180,6 @@ pub fn verify_request(req: &InferenceJobRequest, now_ms: Timestamp) -> Result<()
         RouterError::BadRequest("signature verification failed".into())
     })?;
 
-    // The domain tag must be present in the signed bytes — this is
-    // defense-in-depth against someone routing a different kind of
-    // signed payload through this endpoint.
     if !signing_bytes
         .windows(INFERENCE_REQUEST_DOMAIN.len())
         .any(|w| w == INFERENCE_REQUEST_DOMAIN)
@@ -191,7 +189,19 @@ pub fn verify_request(req: &InferenceJobRequest, now_ms: Timestamp) -> Result<()
         ));
     }
 
-    let _ = req.derived_user_address();
+    if let Some(cert) = &req.delegation {
+        if cert.session_pubkey != req.user_pubkey {
+            return Err(RouterError::BadRequest(
+                "delegation session_pubkey does not match request user_pubkey".into(),
+            ));
+        }
+        verify_delegation(cert, now_ms).map_err(|e| {
+            warn!(error=%e, "delegation verification failed");
+            RouterError::BadRequest(format!("delegation: {e}"))
+        })?;
+    }
+
+    let _ = req.billing_address();
 
     Ok(())
 }
@@ -230,6 +240,7 @@ mod tests {
             signature: Signature::ed25519([0; 64]),
             prefer_tee: false,
             encrypted_prompt: None,
+            delegation: None,
         };
         let bytes = unsigned.signing_bytes();
         let sig = sign(&sk, &bytes);
@@ -278,11 +289,92 @@ mod tests {
     #[test]
     fn tampered_prompt_rejected() {
         let mut req = sign_req("hi", 1_000);
-        // Swap prompt after signing.
         req.prompt = "something else".into();
         assert!(matches!(
             verify_request(&req, 1_000),
             Err(RouterError::BadRequest(_))
         ));
+    }
+
+    fn sign_req_with_session(prompt: &str, timestamp_ms: Timestamp) -> InferenceJobRequest {
+        use arknet_compute::wire::{DelegationCert, DelegationSigningBody, DELEGATION_DOMAIN};
+
+        let main_sk = SigningKey::generate();
+        let main_pk = main_sk.verifying_key().to_pubkey();
+        let main_addr = arknet_compute::wire::derive_user_address(&main_pk);
+
+        let session_sk = SigningKey::generate();
+        let session_pk = session_sk.verifying_key().to_pubkey();
+
+        let deleg_body = DelegationSigningBody {
+            domain: DELEGATION_DOMAIN,
+            session_pubkey: &session_pk,
+            spending_limit: 1_000_000,
+            expiry_ms: timestamp_ms + 3_600_000,
+            main_wallet_address: &main_addr,
+        };
+        let deleg_bytes = borsh::to_vec(&deleg_body).unwrap();
+        let deleg_sig = sign(&main_sk, &deleg_bytes);
+
+        let cert = DelegationCert {
+            session_pubkey: session_pk.clone(),
+            spending_limit: 1_000_000,
+            expiry_ms: timestamp_ms + 3_600_000,
+            main_wallet_address: main_addr,
+            main_wallet_pubkey: main_pk,
+            main_wallet_signature: deleg_sig,
+        };
+
+        let unsigned = InferenceJobRequest {
+            model_ref: "local/stories260K".into(),
+            model_hash: [0; 32],
+            prompt: prompt.into(),
+            max_tokens: 1,
+            seed: 0,
+            deterministic: true,
+            stop_strings: vec![],
+            nonce: 1,
+            timestamp_ms,
+            user_pubkey: session_pk,
+            signature: Signature::ed25519([0; 64]),
+            prefer_tee: false,
+            encrypted_prompt: None,
+            delegation: Some(cert),
+        };
+        let bytes = unsigned.signing_bytes();
+        let sig = sign(&session_sk, &bytes);
+        InferenceJobRequest {
+            signature: sig,
+            ..unsigned
+        }
+    }
+
+    #[test]
+    fn session_key_request_verifies() {
+        let req = sign_req_with_session("hello", 1_000);
+        verify_request(&req, 1_000).expect("session key request should verify");
+    }
+
+    #[test]
+    fn session_key_billing_is_main_wallet() {
+        let req = sign_req_with_session("hello", 1_000);
+        let billing = req.billing_address();
+        let main_addr = req.delegation.as_ref().unwrap().main_wallet_address;
+        assert_eq!(billing, main_addr);
+    }
+
+    #[test]
+    fn expired_session_rejected() {
+        let req = sign_req_with_session("hello", 1_000);
+        // now_ms is way past expiry
+        assert!(verify_request(&req, 9_999_999_999_999).is_err());
+    }
+
+    #[test]
+    fn mismatched_session_pubkey_rejected() {
+        let mut req = sign_req_with_session("hello", 1_000);
+        let other_sk = SigningKey::generate();
+        req.user_pubkey = other_sk.verifying_key().to_pubkey();
+        assert!(verify_request(&req, 1_000).is_err());
     }
 }

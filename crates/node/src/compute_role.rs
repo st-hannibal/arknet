@@ -149,6 +149,12 @@ async fn handle_inference_request(
         }
     };
 
+    let now_ms = arknet_router::failover::now_ms();
+    if let Err(e) = arknet_router::intake::verify_request(&req, now_ms) {
+        warn!(error = %e, "inference request verification failed");
+        return;
+    }
+
     let model_ref = match ModelRef::parse(&req.model_ref) {
         Ok(r) => r,
         Err(e) => {
@@ -162,7 +168,7 @@ async fn handle_inference_request(
     let job_id = {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"arknet-job-id-v1");
-        hasher.update(&req.derived_user_address().0);
+        hasher.update(&req.billing_address().0);
         hasher.update(&req.nonce.to_le_bytes());
         hasher.update(&now.to_le_bytes());
         let digest = hasher.finalize();
@@ -222,6 +228,7 @@ pub async fn announce_models(
         total_stake: 1_000_000,
         supports_tee,
         timestamp_ms: arknet_router::failover::now_ms(),
+        available_slots: 1,
     };
     let data = match borsh::to_vec(&offer) {
         Ok(d) => d,

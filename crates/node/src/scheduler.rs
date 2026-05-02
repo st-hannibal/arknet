@@ -19,12 +19,11 @@ use tracing::info;
 use crate::errors::{NodeError, Result};
 use crate::runtime::NodeRuntime;
 
-/// The four roles a node can play. Only `Compute` has a real body
-/// at Phase 0.
+/// The three roles a node can play. Router was removed in v1.0.8 —
+/// the SDK discovers compute nodes via gossip directly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Validator,
-    Router,
     Compute,
     Verifier,
 }
@@ -33,7 +32,6 @@ impl fmt::Display for Role {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Role::Validator => "validator",
-            Role::Router => "router",
             Role::Compute => "compute",
             Role::Verifier => "verifier",
         })
@@ -45,7 +43,6 @@ impl FromStr for Role {
     fn from_str(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
             "validator" => Ok(Role::Validator),
-            "router" => Ok(Role::Router),
             "compute" => Ok(Role::Compute),
             "verifier" => Ok(Role::Verifier),
             other => Err(NodeError::RoleNotImplemented(other.to_string())),
@@ -72,7 +69,6 @@ pub async fn run(
                 run_compute(rt, shutdown).await
             }
         }
-        Role::Router => crate::router_role::run(rt, shutdown).await,
         Role::Validator => run_validator(rt, shutdown).await,
         Role::Verifier => crate::verifier_role::run(rt, shutdown).await,
     }
@@ -159,7 +155,7 @@ mod tests {
 
     #[test]
     fn role_display_roundtrips() {
-        for r in [Role::Validator, Role::Router, Role::Compute, Role::Verifier] {
+        for r in [Role::Validator, Role::Compute, Role::Verifier] {
             assert_eq!(Role::from_str(&r.to_string()).unwrap(), r);
         }
     }
@@ -177,18 +173,6 @@ mod tests {
         let shutdown = CancellationToken::new();
 
         let err = run(Role::Verifier, rt, None, shutdown).await.unwrap_err();
-        assert!(matches!(err, NodeError::Config(_)));
-    }
-
-    #[tokio::test]
-    async fn router_role_without_handle_errors() {
-        let tmp = tempfile::tempdir().unwrap();
-        let cfg = arknet_common::config::NodeConfig::default();
-        let rt = NodeRuntime::open(tmp.path().to_path_buf(), cfg)
-            .await
-            .unwrap();
-        let shutdown = CancellationToken::new();
-        let err = run(Role::Router, rt, None, shutdown).await.unwrap_err();
         assert!(matches!(err, NodeError::Config(_)));
     }
 

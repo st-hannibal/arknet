@@ -1,34 +1,34 @@
 //! Public Rust SDK for arknet.
 //!
-//! Provides an async `Client` with OpenAI-compatible methods:
-//! - `chat_completion` — non-streaming completions
-//! - `chat_completion_stream` — streaming SSE completions
-//! - `list_models` — query the on-chain model registry
-//! - `infer_p2p` — direct P2P inference via libp2p to a compute node
+//! Pure p2p — the SDK joins the arknet gossip mesh, discovers compute
+//! nodes via `PoolOffer` messages, and connects directly for inference.
+//! No HTTP anywhere.
 //!
-//! # Wallet
+//! # Session keys
 //!
-//! The [`wallet::Wallet`] type holds an Ed25519 keypair for signing
-//! inference requests. Attach one to the client via [`Client::with_wallet`]
-//! or [`ConnectOptions::wallet`] to enable signed/P2P operations.
+//! Create a [`session::SessionKey`] from a [`wallet::Wallet`] to limit
+//! exposure: the session key has a spending cap and expiry.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! # async fn demo() -> arknet_sdk::Result<()> {
+//! use std::time::Duration;
+//!
 //! let wallet = arknet_sdk::wallet::Wallet::create();
-//! let client = arknet_sdk::Client::new("http://127.0.0.1:3000")?
-//!     .with_wallet(wallet);
-//! let resp = client.chat_completion(arknet_sdk::ChatRequest {
-//!     model: "meta-llama/Llama-3-8B".into(),
-//!     messages: vec![arknet_sdk::Message {
-//!         role: "user".into(),
-//!         content: "Hello!".into(),
-//!     }],
-//!     max_tokens: Some(64),
+//! let session = arknet_sdk::session::SessionKey::create(
+//!     &wallet, 100_000_000, Duration::from_secs(3600),
+//! )?;
+//! let client = arknet_sdk::Client::connect(arknet_sdk::ConnectOptions {
+//!     session: Some(session),
 //!     ..Default::default()
 //! }).await?;
-//! println!("{}", resp.choices[0].message.content);
+//! let response = client.infer(arknet_sdk::InferRequest {
+//!     model: "Qwen/Qwen3-0.6B-Q8_0".into(),
+//!     prompt: "Hello!".into(),
+//!     max_tokens: 64,
+//!     ..Default::default()
+//! }).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -36,59 +36,66 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod candidate_table;
+pub mod discovery;
 pub mod errors;
 pub mod p2p;
+pub mod session;
 pub mod wallet;
-
-use serde::{Deserialize, Serialize};
 
 pub use errors::{Result, SdkError};
 
-/// arknet SDK client. Wraps an HTTP connection to a node's
-/// OpenAI-compatible API surface, with optional wallet for signed
-/// requests and P2P direct connect.
+/// Hardcoded fallback seed multiaddrs (validator nodes).
+const FALLBACK_SEED_MULTIADDRS: &[&str] =
+    &["/ip4/63.181.188.155/tcp/26656/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f"];
+
+/// arknet SDK client. Joins the gossip mesh, discovers compute nodes,
+/// and sends signed inference requests over p2p.
 pub struct Client {
-    base_url: String,
-    http: reqwest::Client,
-    api_key: Option<String>,
+    swarm: discovery::SdkSwarmHandle,
     wallet: Option<wallet::Wallet>,
+    session: Option<session::SessionKey>,
 }
 
 impl Client {
-    /// Create a new client pointing at an arknet node.
+    /// Connect to the arknet mesh via bootstrap peers.
     ///
-    /// `base_url` should be the node's HTTP root, e.g.
-    /// `http://127.0.0.1:3000`. The client appends `/v1/...` paths.
-    /// Create a new client pointing at an arknet node.
-    ///
-    /// Reads wallet address from `ARKNET_WALLET` env var if not
-    /// provided explicitly via [`ConnectOptions`].
-    pub fn new(base_url: &str) -> Result<Self> {
-        let base_url = base_url.trim_end_matches('/').to_string();
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .map_err(|e| SdkError::Http(e.to_string()))?;
-        let api_key = std::env::var("ARKNET_WALLET").ok();
+    /// Discovers compute nodes via gossip. Waits up to
+    /// `discovery_timeout` (default 30s) for the first `PoolOffer`.
+    pub async fn connect(opts: ConnectOptions) -> Result<Self> {
+        let bootstrap_peers: Vec<arknet_network::Multiaddr> = if opts.seeds.is_empty() {
+            FALLBACK_SEED_MULTIADDRS
+                .iter()
+                .filter_map(|s| s.parse().ok())
+                .collect()
+        } else {
+            opts.seeds.iter().filter_map(|s| s.parse().ok()).collect()
+        };
+
+        let config = discovery::SdkConfig {
+            network_id: opts.network_id,
+            bootstrap_peers,
+            discovery_timeout: opts.discovery_timeout,
+        };
+
+        let (swarm, _join) = discovery::start(config).await?;
+
         Ok(Self {
-            base_url,
-            http,
-            api_key,
-            wallet: None,
+            swarm,
+            wallet: opts.wallet,
+            session: opts.session,
         })
     }
 
-    /// Attach a [`wallet::Wallet`] to this client.
-    ///
-    /// Required for [`infer_p2p`](Self::infer_p2p) and signed inference
-    /// requests. The wallet's address is used as the `Authorization`
-    /// bearer token for HTTP requests when no `ARKNET_WALLET` env var
-    /// is set.
+    /// Attach a wallet after construction.
     pub fn with_wallet(mut self, wallet: wallet::Wallet) -> Self {
-        if self.api_key.is_none() {
-            self.api_key = Some(self.wallet_address_hex(&wallet));
-        }
         self.wallet = Some(wallet);
+        self
+    }
+
+    /// Attach a session key after construction.
+    pub fn with_session(mut self, session: session::SessionKey) -> Self {
+        self.session = Some(session);
         self
     }
 
@@ -97,143 +104,40 @@ impl Client {
         self.wallet.as_ref()
     }
 
-    /// Hex-encode the wallet address (for use as bearer token).
-    fn wallet_address_hex(&self, w: &wallet::Wallet) -> String {
-        w.address().to_hex()
+    /// Reference to the attached session key, if any.
+    pub fn session(&self) -> Option<&session::SessionKey> {
+        self.session.as_ref()
     }
 
-    /// Auto-discover a gateway from the on-chain registry.
-    ///
-    /// Fetches the live seed list from `seeds.json` on the arknet
-    /// website, then contacts each seed's `/v1/gateways`. If the
-    /// seed list is unreachable, falls back to the hardcoded list.
-    /// No code changes needed to add new seeds — just edit seeds.json.
-    pub async fn connect(opts: ConnectOptions) -> Result<Self> {
-        let seeds = if opts.seeds.is_empty() {
-            fetch_seeds().await
-        } else {
-            opts.seeds
-        };
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .map_err(|e| SdkError::Http(e.to_string()))?;
-
-        for seed in &seeds {
-            let url = format!("{}/v1/gateways", seed.trim_end_matches('/'));
-            let resp = match http.get(&url).send().await {
-                Ok(r) if r.status().is_success() => r,
-                _ => continue,
-            };
-            let body: serde_json::Value = match resp.json().await {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let gateways = body["gateways"].as_array().cloned().unwrap_or_default();
-            // Sort HTTPS first.
-            let mut sorted = gateways;
-            sorted.sort_by_key(|g| {
-                if g["https"].as_bool() == Some(true) {
-                    0
-                } else {
-                    1
-                }
-            });
-            for gw in &sorted {
-                let is_https = gw["https"].as_bool() == Some(true);
-                if opts.require_https && !is_https {
-                    continue;
-                }
-                if let Some(gw_url) = gw["url"].as_str() {
-                    let mut client = Self::new(gw_url)?;
-                    if let Some(w) = opts.wallet {
-                        client = client.with_wallet(w);
-                    }
-                    return Ok(client);
-                }
-            }
-        }
-        Err(SdkError::Http("no reachable gateway found".into()))
+    /// The candidate table populated from gossip.
+    pub fn candidates(&self) -> &candidate_table::CandidateTable {
+        self.swarm.candidates()
     }
 
-    /// Non-streaming chat completion.
-    pub async fn chat_completion(&self, req: ChatRequest) -> Result<ChatResponse> {
-        let url = format!("{}/v1/chat/completions", self.base_url);
-        let mut builder = self.http.post(&url).json(&req);
-        if let Some(key) = &self.api_key {
-            builder = builder.header("Authorization", format!("Bearer {key}"));
-        }
-        let resp = builder
-            .send()
-            .await
-            .map_err(|e| SdkError::Http(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(SdkError::Api { status, body });
-        }
-
-        resp.json::<ChatResponse>()
-            .await
-            .map_err(|e| SdkError::Http(e.to_string()))
-    }
-
-    /// List models from the on-chain registry.
-    pub async fn list_models(&self) -> Result<ModelsResponse> {
-        let url = format!("{}/v1/models", self.base_url);
-        let mut builder = self.http.get(&url);
-        if let Some(key) = &self.api_key {
-            builder = builder.header("Authorization", format!("Bearer {key}"));
-        }
-        let resp = builder
-            .send()
-            .await
-            .map_err(|e| SdkError::Http(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(SdkError::Api { status, body });
-        }
-
-        resp.json::<ModelsResponse>()
-            .await
-            .map_err(|e| SdkError::Http(e.to_string()))
-    }
-
-    /// Discover compute-node candidates for a model via the gateway,
-    /// connect directly to one over P2P, send a signed
-    /// [`InferenceJobRequest`](arknet_compute::wire::InferenceJobRequest),
-    /// and return the raw borsh-encoded response bytes.
+    /// Send an inference request to a compute node.
     ///
-    /// # Flow
-    ///
-    /// 1. `GET {gateway}/v1/candidates/{model}` to discover peer multiaddrs.
-    /// 2. Connect to the first reachable candidate via [`p2p::P2pClient`].
-    /// 3. Build an `InferenceJobRequest`, sign it with the wallet, borsh-encode.
-    /// 4. Send over the `/arknet/inference/1` protocol.
-    /// 5. Return the response bytes (caller decodes as `InferenceResponse`).
-    ///
-    /// Requires a wallet to be attached.
-    pub async fn infer_p2p(&self, req: P2pInferenceRequest) -> Result<Vec<u8>> {
-        let w = self.wallet.as_ref().ok_or(SdkError::NoWallet)?;
-
-        // 1. Discover candidates.
-        let candidates = self.discover_candidates(&req.model).await?;
-        if candidates.is_empty() {
-            return Err(SdkError::P2p("no candidates returned by gateway".into()));
-        }
-
-        // 2. Build and sign the InferenceJobRequest.
+    /// Discovers candidates from gossip, builds a signed request (using
+    /// session key if available, otherwise wallet), and connects directly
+    /// via p2p. Retries up to `max_retries` candidates on busy/error.
+    pub async fn infer(&self, req: InferRequest) -> Result<Vec<u8>> {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        let pubkey = w.public_key();
-        let model_hash = req.model_hash.unwrap_or([0u8; 32]);
+        // Build the signing identity.
+        let (pubkey, delegation) = if let Some(session) = &self.session {
+            if session.is_expired() {
+                return Err(SdkError::Session("session key expired".into()));
+            }
+            (session.public_key(), Some(session.delegation().clone()))
+        } else if let Some(w) = &self.wallet {
+            (w.public_key(), None)
+        } else {
+            return Err(SdkError::NoWallet);
+        };
 
+        let model_hash = req.model_hash.unwrap_or([0u8; 32]);
         let mut job_req = arknet_compute::wire::InferenceJobRequest {
             model_ref: req.model.clone(),
             model_hash,
@@ -242,171 +146,74 @@ impl Client {
             seed: req.seed.unwrap_or(0),
             deterministic: req.deterministic,
             stop_strings: req.stop_strings.clone(),
-            nonce: now_ms, // Use timestamp as nonce for simplicity.
+            nonce: now_ms,
             timestamp_ms: now_ms,
             user_pubkey: pubkey,
-            signature: arknet_common::Signature::ed25519([0u8; 64]), // Placeholder.
+            signature: arknet_common::Signature::ed25519([0u8; 64]),
             prefer_tee: req.prefer_tee,
             encrypted_prompt: None,
+            delegation,
         };
 
-        // Sign the request.
         let signing_bytes = job_req.signing_bytes();
-        job_req.signature = w.sign(&signing_bytes);
+        job_req.signature = if let Some(session) = &self.session {
+            session.sign(&signing_bytes)
+        } else if let Some(w) = &self.wallet {
+            w.sign(&signing_bytes)
+        } else {
+            return Err(SdkError::NoWallet);
+        };
 
-        // Borsh-encode.
-        let encoded = borsh::to_vec(&job_req)
-            .map_err(|e| SdkError::Wire(format!("failed to encode request: {e}")))?;
+        let encoded =
+            borsh::to_vec(&job_req).map_err(|e| SdkError::Wire(format!("encode request: {e}")))?;
 
-        // 3. Bootstrap check + escrow. During bootstrap, inference is free
-        // (per-wallet quota: 10/hr, 100/day). Post-bootstrap, the SDK
-        // checks balance and submits an EscrowLock tx before inference.
-        let bootstrap = self.check_bootstrap().await.unwrap_or(true);
-        if !bootstrap {
-            let balance = self.get_balance().await?;
-            // TODO: query pricing oracle for exact cost. For now use a
-            // flat estimate of 10_000 ark_atom per request.
-            let cost: u128 = 10_000;
-            if balance < cost {
-                return Err(SdkError::Api {
-                    status: 402,
-                    body: format!(
-                        "insufficient balance: have {} ark_atom, need {} ark_atom. \
-                         Fund your wallet: 0x{}",
-                        balance,
-                        cost,
-                        hex::encode(w.address().as_bytes())
-                    ),
-                });
-            }
-            // Submit EscrowLock transaction to the chain.
-            self.submit_escrow_lock(&job_req, cost).await?;
+        // Discover candidates from gossip.
+        let candidates = self.swarm.candidates().eligible_for(&req.model, now_ms);
+        if candidates.is_empty() {
+            return Err(SdkError::Discovery(format!(
+                "no compute nodes serving model '{}'",
+                req.model
+            )));
         }
 
-        // 4. Try each candidate until one succeeds.
-        let mut last_err = String::from("no candidates tried");
-        for addr in &candidates {
-            match p2p::P2pClient::connect(addr).await {
-                Ok(mut client) => match client.infer(encoded.clone()).await {
-                    Ok(resp) => return Ok(resp),
-                    Err(e) => {
-                        last_err = format!("infer failed on {addr}: {e}");
-                        continue;
-                    }
-                },
-                Err(e) => {
-                    last_err = format!("connect failed to {addr}: {e}");
-                    continue;
+        // Try candidates in order (sorted by capacity + stake).
+        let max_retries = req.max_retries.unwrap_or(3).min(candidates.len() as u32);
+        for candidate in candidates.iter().take(max_retries as usize) {
+            if candidate.multiaddrs.is_empty() {
+                continue;
+            }
+
+            for addr in &candidate.multiaddrs {
+                match p2p::P2pClient::connect(addr).await {
+                    Ok(mut client) => match client.infer(encoded.clone()).await {
+                        Ok(resp) => {
+                            if let Ok(events) = borsh::from_slice::<
+                                Vec<arknet_compute::wire::InferenceJobEvent>,
+                            >(&resp)
+                            {
+                                if events.iter().any(|e| {
+                                    matches!(
+                                        e,
+                                        arknet_compute::wire::InferenceJobEvent::Busy { .. }
+                                    )
+                                }) {
+                                    break;
+                                }
+                            }
+                            return Ok(resp);
+                        }
+                        Err(_) => continue,
+                    },
+                    Err(_) => continue,
                 }
             }
         }
 
-        Err(SdkError::P2p(format!(
-            "all candidates exhausted: {last_err}"
-        )))
+        Err(SdkError::AllComputeNodesBusy)
     }
 
-    /// Query the gateway for compute node candidates serving a model.
-    ///
-    /// Calls `GET {base_url}/v1/candidates/{model}` and expects a JSON
-    /// response with `{ "candidates": ["/ip4/.../p2p/...", ...] }`.
-    async fn discover_candidates(&self, model: &str) -> Result<Vec<String>> {
-        let url = format!(
-            "{}/v1/candidates/{}",
-            self.base_url,
-            urlencoding::encode(model)
-        );
-        let mut builder = self.http.get(&url);
-        if let Some(key) = &self.api_key {
-            builder = builder.header("Authorization", format!("Bearer {key}"));
-        }
-        let resp = builder
-            .send()
-            .await
-            .map_err(|e| SdkError::Http(format!("candidate discovery: {e}")))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(SdkError::Api { status, body });
-        }
-
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| SdkError::Http(format!("candidate response parse: {e}")))?;
-
-        let addrs = body["candidates"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Ok(addrs)
-    }
-
-    /// Query the user's on-chain balance. Returns the balance in
-    /// ark_atom (1 ARK = 1_000_000_000 ark_atom).
-    pub async fn get_balance(&self) -> Result<u128> {
-        let w = self.wallet.as_ref().ok_or(SdkError::NoWallet)?;
-        let addr = w.address();
-        let url = format!(
-            "{}/v1/account/0x{}",
-            self.base_url,
-            hex::encode(addr.as_bytes())
-        );
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| SdkError::Http(format!("balance query: {e}")))?;
-
-        let status = resp.status();
-        if status.as_u16() == 404 {
-            return Ok(0);
-        }
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(SdkError::Api {
-                status: status.as_u16(),
-                body,
-            });
-        }
-
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| SdkError::Http(format!("balance parse: {e}")))?;
-        Ok(body["balance"].as_u64().unwrap_or(0) as u128)
-    }
-
-    /// Check whether the chain is still in bootstrap (free inference).
-    /// Returns `true` during bootstrap, `false` after.
-    async fn check_bootstrap(&self) -> Result<bool> {
-        let url = format!("{}/v1/bootstrap", self.base_url);
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| SdkError::Http(format!("bootstrap check: {e}")))?;
-        if !resp.status().is_success() {
-            return Ok(true);
-        }
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| SdkError::Http(format!("bootstrap parse: {e}")))?;
-        Ok(body["active"].as_bool().unwrap_or(true))
-    }
-
-    /// Submit an EscrowLock transaction to the chain. Blocks until the
-    /// tx is accepted into the mempool (not until it's finalized).
-    async fn submit_escrow_lock(
+    /// Publish a signed escrow transaction via gossip.
+    pub async fn submit_escrow(
         &self,
         job_req: &arknet_compute::wire::InferenceJobRequest,
         amount: u128,
@@ -415,7 +222,7 @@ impl Client {
         let job_id = {
             let mut hasher = blake3::Hasher::new();
             hasher.update(b"arknet-job-id-v1");
-            hasher.update(&job_req.derived_user_address().0);
+            hasher.update(&job_req.billing_address().0);
             hasher.update(&job_req.nonce.to_le_bytes());
             hasher.update(&job_req.timestamp_ms.to_le_bytes());
             let digest = hasher.finalize();
@@ -425,14 +232,14 @@ impl Client {
         };
 
         let tx = arknet_chain::transactions::Transaction::EscrowLock {
-            from: job_req.derived_user_address(),
+            from: job_req.billing_address(),
             job_id,
             amount,
             nonce: job_req.nonce,
             fee: 21_000,
         };
         let tx_bytes =
-            borsh::to_vec(&tx).map_err(|e| SdkError::Wire(format!("escrow tx encode: {e}")))?;
+            borsh::to_vec(&tx).map_err(|e| SdkError::Wire(format!("escrow encode: {e}")))?;
         let sig = w.sign(&tx_bytes);
         let signed = arknet_chain::transactions::SignedTransaction {
             tx,
@@ -442,32 +249,19 @@ impl Client {
         let signed_bytes =
             borsh::to_vec(&signed).map_err(|e| SdkError::Wire(format!("signed tx encode: {e}")))?;
 
-        let url = format!("{}/v1/tx", self.base_url);
-        let resp = self
-            .http
-            .post(&url)
-            .header("Content-Type", "application/octet-stream")
-            .body(signed_bytes)
-            .send()
-            .await
-            .map_err(|e| SdkError::Http(format!("escrow submit: {e}")))?;
+        self.swarm.publish_tx(signed_bytes).await
+    }
 
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(SdkError::Api {
-                status: status.as_u16(),
-                body,
-            });
-        }
-        Ok(())
+    /// Shut down the SDK swarm.
+    pub fn shutdown(&self) {
+        self.swarm.shutdown();
     }
 }
 
-/// Parameters for a direct P2P inference request via [`Client::infer_p2p`].
+/// Parameters for an inference request.
 #[derive(Clone, Debug, Default)]
-pub struct P2pInferenceRequest {
-    /// Model identifier (e.g. `"meta-llama/Llama-3-8B"`).
+pub struct InferRequest {
+    /// Model identifier (e.g. `"Qwen/Qwen3-0.6B-Q8_0"`).
     pub model: String,
     /// Prompt text.
     pub prompt: String,
@@ -477,146 +271,41 @@ pub struct P2pInferenceRequest {
     pub model_hash: Option<[u8; 32]>,
     /// Deterministic mode seed.
     pub seed: Option<u64>,
-    /// Force deterministic mode on the compute node.
+    /// Force deterministic mode.
     pub deterministic: bool,
     /// Stop sequences.
     pub stop_strings: Vec<String>,
     /// Route only to TEE-capable nodes.
     pub prefer_tee: bool,
+    /// Max candidates to try before giving up.
+    pub max_retries: Option<u32>,
 }
 
-const SEEDS_JSON_URL: &str = "https://arknet.arkengel.com/seeds.json";
-const FALLBACK_SEEDS: &[&str] = &["https://api.arknet.arkengel.com"];
-
-/// Fetch the live seed list from the static seeds.json file.
-/// Falls back to the hardcoded list if unreachable.
-async fn fetch_seeds() -> Vec<String> {
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return FALLBACK_SEEDS.iter().map(|s| s.to_string()).collect(),
-    };
-    let resp = match client.get(SEEDS_JSON_URL).send().await {
-        Ok(r) if r.status().is_success() => r,
-        _ => return FALLBACK_SEEDS.iter().map(|s| s.to_string()).collect(),
-    };
-    let body: serde_json::Value = match resp.json().await {
-        Ok(v) => v,
-        Err(_) => return FALLBACK_SEEDS.iter().map(|s| s.to_string()).collect(),
-    };
-    let urls: Vec<String> = body["seeds"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| s["url"].as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    if urls.is_empty() {
-        FALLBACK_SEEDS.iter().map(|s| s.to_string()).collect()
-    } else {
-        urls
-    }
-}
-
-// ─── Request / response types ───────────────────────────────────────
-
-/// Options for [`Client::connect`] auto-discovery.
-#[derive(Default)]
+/// Options for [`Client::connect`].
 pub struct ConnectOptions {
-    /// Seed URLs to discover gateways. Defaults to the arknet seed list.
+    /// Seed multiaddrs (e.g. `"/ip4/1.2.3.4/tcp/26656/p2p/12D3KooW..."`).
+    /// Falls back to hardcoded seeds if empty.
     pub seeds: Vec<String>,
-    /// Only connect to HTTPS gateways.
-    pub require_https: bool,
-    /// Wallet for signed requests and P2P inference.
+    /// Network id (must match the chain). Defaults to `"mainnet"`.
+    pub network_id: String,
+    /// How long to wait for the first PoolOffer.
+    pub discovery_timeout: std::time::Duration,
+    /// Wallet for signing (used if no session key).
     pub wallet: Option<wallet::Wallet>,
+    /// Session key for signing (preferred over wallet).
+    pub session: Option<session::SessionKey>,
 }
 
-/// Chat completion request.
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct ChatRequest {
-    /// Model identifier.
-    pub model: String,
-    /// Conversation messages.
-    pub messages: Vec<Message>,
-    /// Maximum tokens to generate.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-    /// Sampling temperature.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f64>,
-    /// Whether to stream.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stream: Option<bool>,
-    /// Stop sequences.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stop: Option<Vec<String>>,
-    /// Route only to TEE-capable nodes (confidential inference).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prefer_tee: Option<bool>,
-    /// Route only through HTTPS gateways.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub require_https: Option<bool>,
-}
-
-/// A chat message.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Message {
-    /// Role: "system", "user", or "assistant".
-    pub role: String,
-    /// Message content.
-    pub content: String,
-}
-
-/// Chat completion response.
-#[derive(Clone, Debug, Deserialize)]
-pub struct ChatResponse {
-    /// Request identifier.
-    pub id: String,
-    /// Completions.
-    pub choices: Vec<ChatChoice>,
-    /// Token usage.
-    pub usage: Option<TokenUsage>,
-}
-
-/// A single chat choice.
-#[derive(Clone, Debug, Deserialize)]
-pub struct ChatChoice {
-    /// Index.
-    pub index: u32,
-    /// Generated message.
-    pub message: Message,
-    /// Why generation stopped.
-    pub finish_reason: Option<String>,
-}
-
-/// Token counts.
-#[derive(Clone, Debug, Deserialize)]
-pub struct TokenUsage {
-    /// Input tokens.
-    pub prompt_tokens: u32,
-    /// Output tokens.
-    pub completion_tokens: u32,
-    /// Total.
-    pub total_tokens: u32,
-}
-
-/// Models list response.
-#[derive(Clone, Debug, Deserialize)]
-pub struct ModelsResponse {
-    /// Model entries.
-    pub data: Vec<ModelInfo>,
-}
-
-/// A model entry.
-#[derive(Clone, Debug, Deserialize)]
-pub struct ModelInfo {
-    /// Model identifier.
-    pub id: String,
-    /// Owner.
-    pub owned_by: String,
+impl Default for ConnectOptions {
+    fn default() -> Self {
+        Self {
+            seeds: Vec::new(),
+            network_id: "mainnet".into(),
+            discovery_timeout: std::time::Duration::from_secs(30),
+            wallet: None,
+            session: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -624,108 +313,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn client_trims_trailing_slash() {
-        let c = Client::new("http://localhost:3000/").unwrap();
-        assert_eq!(c.base_url, "http://localhost:3000");
-    }
-
-    #[test]
-    fn chat_request_serializes() {
-        let req = ChatRequest {
-            model: "test".into(),
-            messages: vec![Message {
-                role: "user".into(),
-                content: "hi".into(),
-            }],
-            max_tokens: Some(10),
-            ..Default::default()
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"model\":\"test\""));
-        assert!(json.contains("\"max_tokens\":10"));
-        assert!(!json.contains("stream"));
-    }
-
-    #[test]
-    fn chat_response_deserializes() {
-        let json = r#"{
-            "id": "chatcmpl-test",
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": "hello"},
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": 5,
-                "completion_tokens": 1,
-                "total_tokens": 6
-            }
-        }"#;
-        let resp: ChatResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.choices.len(), 1);
-        assert_eq!(resp.choices[0].message.content, "hello");
-    }
-
-    #[test]
-    fn models_response_deserializes() {
-        let json = r#"{
-            "object": "list",
-            "data": [
-                {"id": "llama-3-8b", "object": "model", "created": 0, "owned_by": "user"}
-            ]
-        }"#;
-        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.data.len(), 1);
-        assert_eq!(resp.data[0].id, "llama-3-8b");
-    }
-
-    #[test]
-    fn api_key_from_env() {
-        std::env::set_var("ARKNET_WALLET", "ark1fromenv");
-        let c = Client::new("http://localhost:1234").unwrap();
-        assert_eq!(c.api_key.as_deref(), Some("ark1fromenv"));
-        std::env::remove_var("ARKNET_WALLET");
-    }
-
-    #[test]
-    fn prefer_tee_serialized_when_set() {
-        let req = ChatRequest {
-            model: "test".into(),
-            messages: vec![],
-            prefer_tee: Some(true),
-            ..Default::default()
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"prefer_tee\":true"));
-    }
-
-    #[test]
-    fn prefer_tee_omitted_when_none() {
-        let req = ChatRequest {
-            model: "test".into(),
-            messages: vec![],
-            ..Default::default()
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(!json.contains("prefer_tee"));
-    }
-
-    #[test]
-    fn require_https_serialized_when_set() {
-        let req = ChatRequest {
-            model: "test".into(),
-            messages: vec![],
-            require_https: Some(true),
-            ..Default::default()
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"require_https\":true"));
-    }
-
-    #[test]
     fn connect_options_defaults() {
         let opts = ConnectOptions::default();
         assert!(opts.seeds.is_empty());
-        assert!(!opts.require_https);
+        assert_eq!(opts.network_id, "mainnet");
+    }
+
+    #[test]
+    fn fallback_seeds_are_valid_multiaddrs() {
+        for s in FALLBACK_SEED_MULTIADDRS {
+            let parsed: std::result::Result<arknet_network::Multiaddr, _> = s.parse();
+            assert!(parsed.is_ok(), "invalid fallback seed: {s}");
+        }
+    }
+
+    #[test]
+    fn infer_request_defaults() {
+        let req = InferRequest::default();
+        assert!(req.model.is_empty());
+        assert_eq!(req.max_tokens, 0);
+        assert!(!req.prefer_tee);
+        assert!(!req.deterministic);
     }
 }

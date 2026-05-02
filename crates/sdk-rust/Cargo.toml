@@ -15,7 +15,6 @@ arknet-compute = { workspace = true }
 arknet-chain   = { workspace = true }
 tokio          = { workspace = true }
 futures        = { workspace = true }
-reqwest        = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 thiserror      = { workspace = true }
@@ -24,8 +23,9 @@ blake3         = { workspace = true }
 libp2p         = { workspace = true }
 zeroize        = { workspace = true }
 hex            = { workspace = true }
+tokio-util     = { workspace = true }
+tracing        = { workspace = true }
 dirs-next      = "2.0"
-urlencoding    = "2.1"
 
 [dev-dependencies]
 tempfile       = "3.10"

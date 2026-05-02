@@ -184,7 +184,7 @@ impl InferenceDispatcher for RemoteComputeDispatcher {
 fn mint_job_id(req: &InferenceJobRequest, now: Timestamp) -> JobId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"arknet-job-id-v1");
-    hasher.update(&req.derived_user_address().0);
+    hasher.update(&req.billing_address().0);
     hasher.update(&req.nonce.to_le_bytes());
     hasher.update(&now.to_le_bytes());
     let digest = hasher.finalize();
@@ -222,6 +222,7 @@ mod tests {
             signature: Signature::ed25519([0; 64]),
             prefer_tee: false,
             encrypted_prompt: None,
+            delegation: None,
         };
         let a = mint_job_id(&req, 0);
         req.nonce = 2;
@@ -245,6 +246,7 @@ mod tests {
             signature: Signature::ed25519([0; 64]),
             prefer_tee: false,
             encrypted_prompt: None,
+            delegation: None,
         };
         assert_eq!(mint_job_id(&req, 42), mint_job_id(&req, 42));
     }

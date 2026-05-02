@@ -27,5 +27,5 @@ pub use pricing::{PricingState, GENESIS_BASE_PRICE, PRICE_CEILING, PRICE_FLOOR, 
 pub use rewards::{
     compute_block_reward, credit_rewards, distribute_reward, latency_mult, size_mult, uptime_mult,
     ModelCategory, RewardDistribution, BURN_PERCENT, COMPUTE_PERCENT, DELEGATOR_PERCENT,
-    ROUTER_PERCENT, TREASURY_PERCENT, VERIFIER_PERCENT,
+    TREASURY_PERCENT, VERIFIER_PERCENT,
 };

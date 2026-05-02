@@ -93,6 +93,7 @@ async fn node_level_l2_roundtrip() {
         signature: Signature::ed25519([0; 64]),
         prefer_tee: false,
         encrypted_prompt: None,
+        delegation: None,
     };
     let sig = sign(&sk, &unsigned.signing_bytes());
     let req = InferenceJobRequest {

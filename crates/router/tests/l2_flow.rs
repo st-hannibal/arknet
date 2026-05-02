@@ -53,6 +53,7 @@ fn sign_request_with_key(
         signature: Signature::ed25519([0; 64]),
         prefer_tee: false,
         encrypted_prompt: None,
+        delegation: None,
     };
     let bytes = unsigned.signing_bytes();
     let sig = sign(sk, &bytes);
@@ -267,6 +268,7 @@ async fn no_candidate_for_unknown_model_rejects_cleanly() {
         signature: Signature::ed25519([0; 64]),
         prefer_tee: false,
         encrypted_prompt: None,
+        delegation: None,
     };
     let bytes = unsigned.signing_bytes();
     let sig = sign(&sk, &bytes);
@@ -275,7 +277,7 @@ async fn no_candidate_for_unknown_model_rejects_cleanly() {
         ..unsigned
     };
 
-    let user_addr = req.derived_user_address();
+    let user_addr = req.billing_address();
     let err = router
         .accept(req, 1_000, QuotaPolicy::Enforce)
         .await

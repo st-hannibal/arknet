@@ -15,6 +15,7 @@ mod logging;
 mod metrics;
 mod network_boot;
 mod paths;
+#[allow(dead_code)]
 mod router_role;
 mod rpc;
 mod runtime;
