@@ -1,0 +1,15 @@
+chain_id = "arknet-1"
+initial_height = 0
+initial_timestamp_ms = 1777680000000
+genesis_message = "Everything in the universe is within you. Ask all from yourself. — arknet genesis, 2 May 2026"
+
+[[validators]]
+name = "arknet-genesis-validator"
+pubkey_hex = "51b8b9e3fb55754f0ae717415d79a4c49d7ea0a62d33e697c6ef7cfe4cee1bb2"
+operator_hex = "0xbc2d792dfca0e2a409c60fb720bac710bf01798f"
+voting_power = 1
+
+[params]
+base_fee = 1000000000
+gas_target = 15000000
+gas_limit = 30000000
