@@ -59,8 +59,8 @@ async fn main() {
     match client
         .infer(InferRequest {
             model: "Qwen/Qwen3-0.6B-Q8_0".into(),
-            prompt: "Hello, what is arknet?".into(),
-            max_tokens: 32,
+            prompt: "Hi, how are you?".into(),
+            max_tokens: 64,
             ..Default::default()
         })
         .await

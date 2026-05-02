@@ -115,6 +115,12 @@ impl ModelManager {
     }
 
     /// Direct cache accessor — used by operator tooling and tests.
+    /// Access the underlying model registry.
+    pub fn registry(&self) -> &Arc<dyn ModelRegistry> {
+        &self.inner.registry
+    }
+
+    /// Access the download cache.
     pub fn cache(&self) -> &Cache {
         &self.inner.cache
     }

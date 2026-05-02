@@ -22,6 +22,9 @@ use crate::types::{ModelManifest, ModelRef};
 pub trait ModelRegistry: Send + Sync {
     /// Resolve a ref to its concrete manifest, or report unknown.
     async fn resolve(&self, r: &ModelRef) -> Result<ModelManifest>;
+
+    /// Downcast support for runtime model registration.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Shape of the `models.json` file on disk.
@@ -39,10 +42,11 @@ pub struct MockRegistryFile {
 /// Offline registry backed by a JSON file.
 ///
 /// Use for Phase 0 development and integration tests. The file is read
-/// once at construction; call [`MockRegistry::reload`] to pick up edits.
-#[derive(Clone, Debug)]
+/// once at construction. Supports runtime insertion via [`Self::insert`]
+/// for `/v1/models/load`.
+#[derive(Debug)]
 pub struct MockRegistry {
-    file: MockRegistryFile,
+    file: parking_lot::RwLock<MockRegistryFile>,
 }
 
 impl MockRegistry {
@@ -50,33 +54,44 @@ impl MockRegistry {
     pub async fn from_path(path: &Path) -> Result<Self> {
         let bytes = fs::read(path).await?;
         let file: MockRegistryFile = serde_json::from_slice(&bytes)?;
-        Ok(Self { file })
+        Ok(Self {
+            file: parking_lot::RwLock::new(file),
+        })
     }
 
     /// Construct directly from an in-memory table — mainly for tests.
     pub fn from_manifests(manifests: HashMap<String, ModelManifest>) -> Self {
         Self {
-            file: MockRegistryFile {
+            file: parking_lot::RwLock::new(MockRegistryFile {
                 version: 1,
                 manifests,
-            },
+            }),
         }
     }
 
     /// Construct from an already-materialized [`MockRegistryFile`].
-    /// Used by the genesis seed which holds a richer source format.
     pub fn from_file(file: MockRegistryFile) -> Self {
-        Self { file }
+        Self {
+            file: parking_lot::RwLock::new(file),
+        }
     }
 
-    /// Number of entries. Mostly useful in tests.
+    /// Number of entries.
     pub fn len(&self) -> usize {
-        self.file.manifests.len()
+        self.file.read().manifests.len()
     }
 
     /// Whether the registry is empty.
     pub fn is_empty(&self) -> bool {
-        self.file.manifests.is_empty()
+        self.file.read().manifests.is_empty()
+    }
+
+    /// Register a model manifest at runtime (used by `/v1/models/load`).
+    pub fn insert(&self, model_ref: &str, manifest: ModelManifest) {
+        self.file
+            .write()
+            .manifests
+            .insert(model_ref.to_string(), manifest);
     }
 }
 
@@ -84,10 +99,15 @@ impl MockRegistry {
 impl ModelRegistry for MockRegistry {
     async fn resolve(&self, r: &ModelRef) -> Result<ModelManifest> {
         self.file
+            .read()
             .manifests
             .get(&r.to_string())
             .cloned()
             .ok_or_else(|| ModelError::UnknownModel(r.to_string()))
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

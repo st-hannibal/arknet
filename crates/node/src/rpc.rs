@@ -230,8 +230,18 @@ async fn do_load(state: &RpcState, req: LoadRequest) -> Result<LoadResponse> {
     )?;
     state.register_manifest(&model_ref, manifest.clone());
 
-    let runtime = temp_runtime_with_manifest(state, &model_ref, manifest).await?;
-    let handle = runtime.inference.load(&model_ref).await?;
+    // Register in the main runtime's model manager so the compute role
+    // can find it when inference requests arrive via the mesh.
+    if let Some(registry) = state
+        .runtime
+        .model_manager
+        .registry()
+        .as_any()
+        .downcast_ref::<arknet_model_manager::MockRegistry>()
+    {
+        registry.insert(&model_ref.to_string(), manifest.clone());
+    }
+    let handle = state.runtime.inference.load(&model_ref).await?;
 
     let model_refs: Vec<String> = state.manifests.lock().keys().cloned().collect();
     if let Some(lm) = &state.loaded_models {
