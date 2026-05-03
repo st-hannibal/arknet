@@ -42,13 +42,14 @@
 <main>
 
 <h1>Node Operators</h1>
-<p>arknet has two node types: <strong>Validator</strong> (consensus, seed, relay) and <strong>Compute</strong> (inference, gossip announce). One binary, one install, pick your role.</p>
+<p>arknet has three node roles: <strong>Validator</strong> (consensus, seed, relay), <strong>Compute</strong> (inference), and <strong>Verifier</strong> (output verification). One binary, one install, pick your role.</p>
 
 <h2>Node types</h2>
 <table>
-  <tr><th>Role</th><th>What it does</th><th>Minimum hardware</th></tr>
-  <tr><td><strong>Validator</strong></td><td>Runs Tendermint BFT consensus, produces blocks, acts as circuit relay and seed node for the mesh</td><td>2 vCPU, 2 GB RAM (t3.small or equivalent)</td></tr>
-  <tr><td><strong>Compute</strong></td><td>Runs AI models via llama.cpp, serves inference, announces loaded models via gossip</td><td>Depends on model size (see below)</td></tr>
+  <tr><th>Role</th><th>What it does</th><th>Earns</th><th>Minimum hardware</th></tr>
+  <tr><td><strong>Validator</strong></td><td>Runs Tendermint BFT consensus, produces blocks, acts as circuit relay and seed node for the mesh</td><td>Block rewards</td><td>2 vCPU, 2 GB RAM</td></tr>
+  <tr><td><strong>Compute</strong></td><td>Runs AI models via llama.cpp, serves inference, announces loaded models via gossip</td><td>80% of job emission</td><td>Depends on model size</td></tr>
+  <tr><td><strong>Verifier</strong></td><td>Re-executes inference jobs deterministically and validates compute output. Catches cheaters.</td><td>7% of job emission</td><td>Same as compute</td></tr>
 </table>
 
 <h2>Install</h2>
@@ -129,6 +130,43 @@ bootstrap_peers = ["/ip4/&lt;validator-ip&gt;/tcp/26656/p2p/&lt;validator-peer-i
 <p><strong>Model list:</strong> See <a href="/docs/models.html">Genesis Models</a> for all available models with SHA-256 digests and download URLs.</p>
 </div>
 
+<h2>Verifier setup</h2>
+<p>Verifiers are the anti-cheating layer. They re-run a sample of inference jobs deterministically and compare the output against what the compute node reported. If a compute node returned garbage, the verifier flags it and the compute node gets slashed.</p>
+
+<h3>How verification works</h3>
+<p>Three tiers of verification, from light to heavy:</p>
+<table>
+  <tr><th>Tier</th><th>Method</th><th>When used</th></tr>
+  <tr><td><strong>Optimistic</strong></td><td>Trust the output, slash if disputed</td><td>Default — fast, low overhead</td></tr>
+  <tr><td><strong>Deterministic</strong></td><td>Re-run with same seed, compare token-by-token</td><td>Random 5% sample of jobs</td></tr>
+  <tr><td><strong>TEE</strong></td><td>Hardware attestation proves code ran correctly</td><td>When compute node has TEE</td></tr>
+</table>
+
+<h3>Step 1: Initialize</h3>
+<pre>arknet init</pre>
+
+<h3>Step 2: Configure</h3>
+<p>Edit <code>~/.arknet/node.toml</code>:</p>
+<pre>[roles]
+verifier = true
+
+[network]
+bootstrap_peers = ["/ip4/&lt;validator-ip&gt;/tcp/26656/p2p/&lt;validator-peer-id&gt;"]</pre>
+
+<h3>Step 3: Start</h3>
+<pre>arknet start --role verifier</pre>
+<p>The verifier subscribes to receipt gossip, selects jobs to verify, re-executes them, and submits dispute transactions if output doesn't match.</p>
+
+<h3>Step 4: Load the same models</h3>
+<p>A verifier needs the same models loaded as the compute nodes it checks. Load models the same way as a compute node — use <code>/v1/models/load</code> on the local admin RPC.</p>
+
+<div class="note">
+<p><strong>At genesis:</strong> The validator node handles verification. As the network grows, independent verifier nodes provide stronger security guarantees since they have no incentive to collude with compute nodes. Verifiers earn <strong>7% of job emission</strong> for each receipt they validate.</p>
+</div>
+
+<h3>Hardware requirements</h3>
+<p>A verifier needs the same hardware as a compute node — it re-runs the same models. Match the compute tier table below for the models you want to verify.</p>
+
 <h2>Ports</h2>
 <table>
   <tr><th>Port</th><th>Default</th><th>Public?</th><th>Purpose</th></tr>
@@ -143,6 +181,7 @@ bootstrap_peers = ["/ip4/&lt;validator-ip&gt;/tcp/26656/p2p/&lt;validator-peer-i
 <pre>[roles]
 validator = false     # run consensus, act as relay/seed
 compute = false       # run inference, announce models
+verifier = false      # verify compute output, earn 7%
 
 [network]
 network = "mainnet"                   # chain ID
