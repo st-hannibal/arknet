@@ -67,9 +67,16 @@ async fn main() {
     {
         Ok(resp) => {
             println!("response: {} bytes", resp.len());
-            match borsh::from_slice::<Vec<arknet_compute::wire::InferenceJobEvent>>(&resp) {
-                Ok(events) => {
-                    for ev in &events {
+            let ir: arknet_network::InferenceResponse = match borsh::from_slice(&resp) {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("decode outer: {e}");
+                    return;
+                }
+            };
+            for raw in &ir.events {
+                match borsh::from_slice::<arknet_compute::wire::InferenceJobEvent>(raw) {
+                    Ok(ev) => {
                         match ev {
                             arknet_compute::wire::InferenceJobEvent::Token { text, .. } => {
                                 print!("{text}");
@@ -85,8 +92,8 @@ async fn main() {
                             }
                         }
                     }
+                    Err(e) => println!("[decode event: {e}]"),
                 }
-                Err(e) => println!("decode error: {e}"),
             }
         }
         Err(e) => println!("inference failed: {e}"),

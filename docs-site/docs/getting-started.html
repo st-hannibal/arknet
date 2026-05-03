@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Getting Started — arknet</title>
-<link rel="stylesheet" href="/style.css">
 <style>
   :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
   * { box-sizing:border-box; margin:0; padding:0; }
@@ -20,6 +19,9 @@
   code,pre { font:14px/1.5 "SF Mono",Menlo,Consolas,monospace; }
   pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:16px; overflow-x:auto; margin:16px 0; }
   code { background:var(--code-bg); padding:2px 6px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; }
+  th { color:var(--muted); font-weight:600; }
   ul,ol { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
   .note { background:var(--code-bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:16px 20px; margin:20px 0; }
   footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
@@ -33,211 +35,135 @@
   <a href="/docs/tokenomics.html">Tokenomics</a>
   <a href="/docs/models.html">Models</a>
   <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/node-operators.html">Node Operators</a>
   <a href="/docs/privacy.html">Privacy</a>
   <a href="/explorer.html">Explorer</a>
-  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
 </nav>
 <main>
 
 <h1>Getting Started</h1>
-<p>Three steps to join the arknet network. Total time: under 5 minutes.</p>
+<p>Run AI inference on a decentralized peer-to-peer network. Install the SDK, create a wallet, connect to the mesh, and infer. Total time: under 2 minutes.</p>
 
-<h2>1. Install</h2>
-<pre>curl -fsSL https://arknet.arkengel.com/install.sh | sh</pre>
-<p>Or build from source:</p>
-<pre>git clone https://github.com/st-hannibal/arknet.git
-cd arknet
-cargo build --release
-cp target/release/arknet /usr/local/bin/</pre>
+<h2>1. Install the SDK</h2>
+<pre># Python
+pip install arknet-sdk
 
-<h2>2. Initialize</h2>
-<pre>arknet init --network mainnet</pre>
-<p>This creates <code>~/.arknet/</code> with your node identity (keypair) and default config. Your key is generated once and persisted — it's your node's permanent identity on the network.</p>
+# Rust
+cargo add arknet-sdk
 
-<h2>3. Configure and start</h2>
-<p>Edit <code>~/.arknet/node.toml</code> to pick your role:</p>
+# TypeScript / Node.js (coming soon — p2p update pending)
+npm install arknet-sdk</pre>
 
-<h3>Compute node (needs GPU)</h3>
-<pre>[roles]
-compute = true
+<h2>2. Create a wallet</h2>
+<p>Your wallet is your identity on the network. It is an Ed25519 keypair stored at <code>~/.arknet/wallet.key</code>.</p>
 
-[resources.compute]
-gpu_devices = [0]
-max_vram_gb = 8
-loaded_models = ["meta-llama/Llama-3.1-8B-Instruct:Q4_K_M"]</pre>
-<pre>arknet start --role compute</pre>
+<h3>Python</h3>
+<pre>from arknet_sdk import Wallet
 
-<h3>Router (any hardware)</h3>
-<pre>[roles]
-router = true</pre>
-<pre>arknet start --role router</pre>
+wallet = Wallet.create()
+wallet.save()                # saves to ~/.arknet/wallet.key
+print(wallet.address)        # your address on the network</pre>
 
-<h3>Validator (needs stake)</h3>
-<pre>[roles]
-validator = true</pre>
-<pre>arknet start --role validator</pre>
+<h3>Rust</h3>
+<pre>use arknet_sdk::wallet::Wallet;
 
-<div class="note">
-<p><strong>Hardware guide:</strong> A Raspberry Pi 5 can run a router. A laptop with an RTX 3060 can serve 7B models. A desktop with an RTX 4090 can serve 27B models. Match the model tier to your VRAM — see <a href="/docs/models.html">Genesis Models</a>.</p>
-</div>
+let wallet = Wallet::create();
+wallet.save()?;</pre>
 
-<h2>Networking</h2>
-<p>Your node needs <strong>one public port</strong> — the P2P port (default 26656). Open it in your firewall or router. Everything else stays private.</p>
-<table>
-  <tr><th>Port</th><th>Default</th><th>Public?</th><th>Purpose</th></tr>
-  <tr><td><strong>P2P</strong></td><td>26656</td><td><strong>Yes</strong></td><td>Node discovery, block gossip, inference dispatch. Noise-encrypted.</td></tr>
-  <tr><td><strong>RPC</strong></td><td>26657</td><td>No (localhost)</td><td>Your personal dashboard — balance, explorer, submit transactions.</td></tr>
-  <tr><td><strong>Metrics</strong></td><td>9090</td><td>No (localhost)</td><td>Prometheus scrape endpoint for monitoring.</td></tr>
-</table>
-<p>This is the same as every blockchain node. Bitcoin: port 8333. Ethereum: 30303. Cosmos: 26656. Open the P2P port, the rest is private.</p>
+<p>Or use the CLI: <code>arknet wallet create</code></p>
 
-<div class="note">
-<p><strong>Want to run a public gateway?</strong> Change <code>rpc_listen</code> to <code>"0.0.0.0:26657"</code> in <code>node.toml</code>. Users can send inference requests through you and you earn the 5% router cut. This is how community gateways work — just a node with a public RPC.</p>
-<p>Register your gateway on-chain so SDKs discover it automatically. HTTPS gateways earn a <strong>1.2x reward multiplier</strong>:</p>
-<pre># HTTP gateway (any machine)
-arknet gateway register --url http://YOUR_IP:26657
+<h2>3. Create a session key</h2>
+<p>Session keys let you authorize inference spending without exposing your main wallet key. Your wallet signs a delegation certificate that grants an ephemeral key a spending limit and expiry.</p>
 
-# HTTPS gateway (domain + TLS cert — 1.2x rewards)
-arknet gateway register --url https://rpc.mynode.com --https</pre>
-<p>See <a href="/docs/privacy.html">Privacy &amp; Security</a> for the full HTTPS vs HTTP comparison.</p>
-</div>
+<h3>Python</h3>
+<pre>session = wallet.create_session(
+    spending_limit=100_000_000,   # 1 ARK in atoms
+    expires_secs=3600,            # 1 hour
+)</pre>
 
-<h2>Confidential inference (TEE)</h2>
-<p>If your server has Intel TDX or AMD SEV-SNP hardware, you can offer confidential inference — prompts are encrypted to your enclave and even your host OS cannot read them.</p>
+<h3>Rust</h3>
+<pre>use std::time::Duration;
+use arknet_sdk::session::SessionKey;
 
-<h3>1. Generate enclave keypair</h3>
-<pre>arknet tee keygen</pre>
-<p>This creates <code>~/.arknet/keys/enclave.key</code> — an X25519 keypair. Users encrypt prompts to this key.</p>
+let session = SessionKey::create(
+    &amp;wallet,
+    100_000_000,
+    Duration::from_secs(3600),
+)?;</pre>
 
-<h3>2. Register TEE on-chain</h3>
-<pre>arknet tee register --platform intel-tdx --quote-file /path/to/attestation.bin</pre>
-<p>This submits a <code>RegisterTeeCapability</code> transaction with your attestation quote and enclave public key.</p>
+<h2>4. Connect to the mesh</h2>
+<p>The SDK joins the arknet P2P network as a lightweight libp2p peer. It connects to a validator seed, subscribes to compute node announcements via gossip, and is ready to send inference.</p>
 
-<h3>3. Enable in config</h3>
-<pre>[tee]
-enabled = true
-platform = "intel-tdx"</pre>
-<pre>arknet start --role compute</pre>
-<p>Your node is now advertised as TEE-capable. Users sending <code>prefer_tee: true</code> requests are routed to you. TEE-verified jobs earn <strong>1.5x emission rewards</strong>.</p>
+<h3>Python</h3>
+<pre>from arknet_sdk import Client
 
-<div class="note">
-<p><strong>No TEE hardware?</strong> No problem. Standard compute nodes still protect prompts via Noise-encrypted P2P and protocol-level prompt isolation. TEE adds hardware-enforced confidentiality on top. See <a href="/docs/privacy.html">Privacy &amp; Security</a> for the full model.</p>
-</div>
+client = Client.connect(session=session)</pre>
 
-<h2>Verify it's working</h2>
-<pre># Check node health
-curl http://localhost:26657/health
+<h3>Rust</h3>
+<pre>use arknet_sdk::{Client, ConnectOptions};
 
-# Check peers
-curl http://localhost:26657/peers
+let client = Client::connect(ConnectOptions {
+    session: Some(session),
+    ..Default::default()
+}).await?;</pre>
 
-# Check chain status
-curl http://localhost:26657/v1/status
+<h2>5. Run inference</h2>
 
-# List available models
-curl http://localhost:26657/v1/models</pre>
-
-<h2>Use the API</h2>
-<p>Once a compute node is serving models, any OpenAI client works:</p>
-<pre>from openai import OpenAI
-
-client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
-resp = client.chat.completions.create(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True,
+<h3>Python</h3>
+<pre>response = client.infer(
+    model="Qwen/Qwen3-0.6B-Q8_0",
+    prompt="Hi, how are you?",
+    max_tokens=64,
 )
-for chunk in resp:
-    print(chunk.choices[0].delta.content, end="")</pre>
+print(response.text)</pre>
 
-<h2>Earning ARK</h2>
+<h3>Rust</h3>
+<pre>use arknet_sdk::InferRequest;
 
-<div class="note">
-<p><strong>Bootstrap period (first 6 months):</strong> No stake required, no cost to users. Just start your node and earn ARK from block emission for serving free inference. This is how the token supply bootstraps from zero. See <a href="/docs/tokenomics.html#bootstrap-period">Tokenomics</a> for details.</p>
-</div>
+let response = client.infer(InferRequest {
+    model: "Qwen/Qwen3-0.6B-Q8_0".into(),
+    prompt: "Hi, how are you?".into(),
+    max_tokens: 64,
+    ..Default::default()
+}).await?;
+println!("{}", response.text);</pre>
 
-<p>Once your node is serving verified inference:</p>
-<ul>
-  <li><strong>Compute nodes</strong> earn 75% of the reward per job</li>
-  <li><strong>Routers</strong> earn 5% for dispatching</li>
-  <li><strong>Verifiers</strong> earn 7% for checking output</li>
-  <li><strong>3% is burned</strong> (deflationary)</li>
-  <li><strong>5% to treasury</strong> (governance-controlled)</li>
-  <li><strong>5% to delegators</strong> (pro-rata by staked amount)</li>
-</ul>
-<p>Rewards are minted from the emission schedule. See <a href="/docs/tokenomics.html">Tokenomics</a> for details.</p>
+<h2>Full example (Python)</h2>
+<pre>from arknet_sdk import Wallet, Client
 
-<h2>CLI Reference</h2>
-<p>Every operator action is a CLI command. No raw transaction hex needed.</p>
+wallet = Wallet.create()
+wallet.save()
+session = wallet.create_session(spending_limit=100_000_000, expires_secs=3600)
+client = Client.connect(session=session)
 
-<h3>Wallet &amp; transfers</h3>
-<pre># Create or show wallet
-arknet wallet create
-arknet wallet address
-arknet wallet balance
-
-# Send ARK
-arknet wallet send --to 0x... --amount 1000000000</pre>
-
-<h3>Staking</h3>
-<pre># Stake for a role (validator, router, compute, verifier)
-arknet wallet stake --role compute --amount 50000000000000
-
-# Begin unstaking (starts 14-day unbonding)
-arknet wallet unstake --role compute --amount 50000000000000
-
-# Finalize unbonding after 14 days
-arknet wallet complete-unbond --role compute --unbond-id 1
-
-# Move stake to a different node (1-day cooldown)
-arknet wallet redelegate --role compute --to-node 0x... --amount 50000000000000</pre>
-
-<h3>Gateway</h3>
-<pre># Register as a public gateway (HTTP)
-arknet gateway register --url http://YOUR_IP:26657
-
-# Register as an HTTPS gateway (1.2x reward multiplier)
-arknet gateway register --url https://rpc.mynode.com --https
-
-# Remove from gateway registry
-arknet gateway unregister</pre>
-
-<h3>Governance</h3>
-<pre># Submit a proposal (requires 10,000 ARK deposit)
-arknet governance propose --title "Add Llama 4 Scout" --body "Proposal details..."
-
-# Read body from a file
-arknet governance propose --title "Add Llama 4 Scout" --body @proposal.md
-
-# Vote on a proposal (yes, no, abstain, no-with-veto)
-arknet governance vote --proposal 1 --choice yes</pre>
+response = client.infer(
+    model="Qwen/Qwen3-0.6B-Q8_0",
+    prompt="Explain arknet in one sentence.",
+    max_tokens=100,
+)
+print(response.text)</pre>
 
 <div class="note">
-<p><strong>How governance works:</strong> Anyone with 10,000 ARK can submit a proposal. It enters a 7-day discussion phase, then a 7-day voting phase. Validators vote weighted by stake. Quorum = 33% of bonded stake. Threshold = 67% yes votes. If it passes, the action executes on-chain and the deposit is returned. If it fails, the deposit is burned.</p>
-<p>Common proposals: add new models, adjust fee parameters, spend treasury funds. Architecture changes require a code release — governance only controls on-chain state.</p>
+<p><strong>Bootstrap period (first 6 months):</strong> Inference is free. No ARK balance needed. Each wallet gets 10 free jobs per hour and 100 per day. After the bootstrap period, inference is paid from your ARK balance. See <a href="/docs/tokenomics.html">Tokenomics</a>.</p>
 </div>
 
-<h3>TEE (confidential inference)</h3>
-<pre># Generate enclave keypair
-arknet tee keygen
-
-# Show enclave public key
-arknet tee pubkey
-
-# Register TEE capability on-chain
-arknet tee register --platform intel-tdx --quote-file attestation.bin</pre>
-
-<h3>All commands</h3>
-<pre>arknet --help                    # full command tree
-arknet &lt;command&gt; --help          # help for any command
-arknet governance --help         # or use the alias: arknet gov --help</pre>
+<h2>How it works</h2>
+<p>There is no HTTP anywhere. The SDK is a libp2p peer that:</p>
+<ol>
+  <li><strong>Bootstraps</strong> from seed validators listed in <code>seeds.json</code></li>
+  <li><strong>Discovers compute nodes</strong> via gossip (<code>arknet/pool/offer/1</code> topic)</li>
+  <li><strong>Connects to a compute node</strong> through the validator relay, then hole-punches a direct connection via DCUtR</li>
+  <li><strong>Sends inference</strong> signed by your session key, receives the response</li>
+</ol>
+<p>Prompts travel only between your machine and the compute node. No middleman sees your data.</p>
 
 <h2>Next steps</h2>
 <ul>
-  <li><a href="/docs/models.html">Browse genesis models</a> — pick what your hardware can serve</li>
-  <li><a href="/docs/tokenomics.html">Understand ARK economics</a> — emission, staking, governance</li>
-  <li><a href="/docs/developers.html">Build on arknet</a> — SDKs, API reference, dApp integration</li>
-  <li><a href="https://github.com/st-hannibal/arknet/discussions">Join the forum</a> — ask questions, report bugs</li>
+  <li><a href="/docs/developers.html">Developer Guide</a> — full SDK reference, session keys, mesh architecture, transaction types</li>
+  <li><a href="/docs/node-operators.html">Node Operators</a> — run a validator or compute node, earn ARK</li>
+  <li><a href="/docs/models.html">Genesis Models</a> — see what models are available</li>
+  <li><a href="/docs/tokenomics.html">Tokenomics</a> — emission schedule, reward splits, staking</li>
+  <li><a href="/docs/privacy.html">Privacy &amp; Security</a> — three-tier privacy model, TEE confidential inference</li>
 </ul>
 
 <footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>

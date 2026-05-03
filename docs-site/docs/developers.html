@@ -22,7 +22,8 @@
   table { width:100%; border-collapse:collapse; margin:16px 0; }
   th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; }
   th { color:var(--muted); font-weight:600; }
-  ul { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  ul,ol { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  .note { background:var(--code-bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:16px 20px; margin:20px 0; }
   footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
 </style>
 </head>
@@ -34,143 +35,208 @@
   <a href="/docs/tokenomics.html">Tokenomics</a>
   <a href="/docs/models.html">Models</a>
   <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/node-operators.html">Node Operators</a>
   <a href="/docs/privacy.html">Privacy</a>
   <a href="/explorer.html">Explorer</a>
-  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
 </nav>
 <main>
 
 <h1>Developer Guide</h1>
-<p>Build applications on arknet using the OpenAI-compatible API. Any existing OpenAI integration works by changing <code>base_url</code>.</p>
+<p>Build on arknet with a pure peer-to-peer SDK. Your application joins the mesh as a lightweight libp2p peer, discovers compute nodes via gossip, and sends inference requests directly over Noise-encrypted channels. No HTTP. No gateway. No middleman.</p>
 
-<h2>API Reference</h2>
-<p>arknet exposes the standard OpenAI endpoints:</p>
-<table>
-  <tr><th>Endpoint</th><th>Method</th><th>Description</th></tr>
-  <tr><td><code>/v1/chat/completions</code></td><td>POST</td><td>Chat completion (streaming + non-streaming)</td></tr>
-  <tr><td><code>/v1/models</code></td><td>GET</td><td>List available models</td></tr>
-  <tr><td><code>/health</code></td><td>GET</td><td>Node health status</td></tr>
-  <tr><td><code>/v1/status</code></td><td>GET</td><td>Chain status (height, peers, consensus)</td></tr>
-  <tr><td><code>/v1/tx</code></td><td>POST</td><td>Submit a signed transaction</td></tr>
-</table>
-
-<h2>Chat completions</h2>
-<h3>Non-streaming</h3>
-<pre>curl -X POST http://localhost:26657/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "meta-llama/Llama-3.1-8B-Instruct",
-    "messages": [{"role": "user", "content": "Explain arknet in one sentence"}],
-    "max_tokens": 100
-  }'</pre>
-
-<h3>Streaming</h3>
-<pre>curl -X POST http://localhost:26657/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "meta-llama/Llama-3.1-8B-Instruct",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": true
-  }'</pre>
-<p>Streaming returns SSE events with <code>data:</code> prefixed JSON chunks, terminated by <code>data: [DONE]</code>.</p>
-
-<h2>SDKs</h2>
-
-<h3>Install</h3>
+<h2>Install</h2>
 <pre># Python
 pip install arknet-sdk
 
-# TypeScript / Node.js
-npm install arknet-sdk
-
 # Rust
-cargo add arknet-sdk</pre>
+cargo add arknet-sdk
+
+# TypeScript / Node.js (coming soon — p2p update pending)
+npm install arknet-sdk</pre>
+
+<h2>Architecture overview</h2>
+<p>When you call <code>Client.connect()</code>, the SDK:</p>
+<ol>
+  <li><strong>Loads seed addresses</strong> from <code>seeds.json</code> (fetched at build time, hardcoded fallback in the binary)</li>
+  <li><strong>Connects to a validator</strong> acting as a circuit relay via libp2p</li>
+  <li><strong>Subscribes to gossip</strong> on <code>arknet/pool/offer/1</code> to discover compute nodes and their loaded models</li>
+  <li><strong>Sends inference</strong> directly to the compute node — through the relay initially, then DCUtR hole-punches a direct connection when possible</li>
+</ol>
+<p>Prompts travel only between your machine and the compute node. Validators, verifiers, and other peers never see your prompt content.</p>
+
+<h2>Wallets</h2>
+<p>Every SDK client needs a wallet. A wallet is an Ed25519 keypair stored as a 64-byte file at <code>~/.arknet/wallet.key</code>. Your address is <code>blake3(pubkey)[0..20]</code>.</p>
 
 <h3>Python</h3>
-<pre>from arknet_sdk import Client
+<pre>from arknet_sdk import Wallet
 
-# Auto-discover a gateway (recommended for network usage)
-client = Client.connect()
-
-# Or connect to a specific node
-client = Client("http://localhost:26657")
-resp = client.chat_completion(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-print(resp["choices"][0]["message"]["content"])
-
-# Streaming
-for chunk in client.chat_completion_stream(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Tell me a story"}],
-):
-    delta = chunk["choices"][0]["delta"]
-    if "content" in delta:
-        print(delta["content"], end="")</pre>
-
-<h3>TypeScript</h3>
-<pre>import { ArknetClient } from "arknet-sdk";
-
-const client = new ArknetClient("http://localhost:26657");
-
-// Non-streaming
-const resp = await client.chatCompletion({
-  model: "meta-llama/Llama-3.1-8B-Instruct",
-  messages: [{ role: "user", content: "Hello!" }],
-});
-console.log(resp.choices[0].message.content);
-
-// Streaming
-for await (const chunk of client.chatCompletionStream({
-  model: "meta-llama/Llama-3.1-8B-Instruct",
-  messages: [{ role: "user", content: "Tell me a story" }],
-})) {
-  process.stdout.write(chunk.choices[0].delta.content ?? "");
-}</pre>
+wallet = Wallet.create()     # generate a new keypair
+wallet.save()                # writes to ~/.arknet/wallet.key
+print(wallet.address)        # hex-encoded 20-byte address</pre>
 
 <h3>Rust</h3>
-<pre>let client = arknet_sdk::Client::new("http://localhost:26657")?;
-let resp = client.chat_completion(arknet_sdk::ChatRequest {
-    model: "meta-llama/Llama-3.1-8B-Instruct".into(),
-    messages: vec![arknet_sdk::Message {
-        role: "user".into(),
-        content: "Hello!".into(),
-    }],
-    ..Default::default()
-}).await?;
-println!("{}", resp.choices[0].message.content);</pre>
+<pre>use arknet_sdk::wallet::Wallet;
 
-<h3>Raw OpenAI SDK (advanced)</h3>
-<p>If you already have an OpenAI integration, point it at any arknet node. You'll need to know a node URL — the arknet SDKs above handle this automatically via <code>Client.connect()</code>.</p>
-<pre>from openai import OpenAI
+let wallet = Wallet::create();
+wallet.save()?;
+println!("{}", wallet.address());</pre>
 
-# Local node (free, no wallet needed)
-client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
+<p>Or create one with the CLI: <code>arknet wallet create</code></p>
+<p>The same wallet file works across Python, Rust, and the CLI.</p>
 
-# Remote node (find URLs via /v1/gateways on any running node)
-# client = OpenAI(base_url="https://some-gateway:26657/v1", api_key="ark1...")
-response = client.chat.completions.create(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Hello from arknet"}],
+<h2>Session keys</h2>
+<p>Instead of signing every inference request with your main wallet key, create a <strong>session key</strong>. Your wallet signs a <code>DelegationCert</code> that authorizes an ephemeral key with a spending limit and expiry. Inference requests are signed by the session key — if it is compromised, damage is bounded.</p>
+
+<h3>Python</h3>
+<pre>from arknet_sdk import Wallet
+
+wallet = Wallet.create()
+wallet.save()
+
+# Create a session key: 1 ARK spending limit, 1 hour expiry
+session = wallet.create_session(
+    spending_limit=100_000_000,   # in atoms (1 ARK = 1e9 atoms)
+    expires_secs=3600,
 )</pre>
 
+<h3>Rust</h3>
+<pre>use std::time::Duration;
+use arknet_sdk::{wallet::Wallet, session::SessionKey};
+
+let wallet = Wallet::create();
+let session = SessionKey::create(
+    &amp;wallet,
+    100_000_000,                     // spending limit in atoms
+    Duration::from_secs(3600),       // 1 hour expiry
+)?;</pre>
+
+<div class="note">
+<p><strong>Best practice:</strong> Create a session key at application startup. Set the spending limit to the maximum you expect to spend in that session. If the session key leaks, an attacker can only spend up to the limit before it expires.</p>
+</div>
+
+<h2>Connecting</h2>
+<p>Pass the session key to <code>Client.connect()</code>. The client joins the p2p mesh, discovers compute nodes, and is ready to send inference.</p>
+
+<h3>Python</h3>
+<pre>from arknet_sdk import Wallet, Client
+
+wallet = Wallet.create()
+wallet.save()
+session = wallet.create_session(spending_limit=100_000_000, expires_secs=3600)
+
+client = Client.connect(session=session)</pre>
+
+<h3>Rust</h3>
+<pre>use std::time::Duration;
+use arknet_sdk::{Client, ConnectOptions, wallet::Wallet, session::SessionKey};
+
+let wallet = Wallet::create();
+let session = SessionKey::create(&amp;wallet, 100_000_000, Duration::from_secs(3600))?;
+
+let client = Client::connect(ConnectOptions {
+    session: Some(session),
+    ..Default::default()
+}).await?;</pre>
+
+<h2>Inference</h2>
+<p>Call <code>client.infer()</code> with a model name, prompt, and max tokens. The SDK finds a compute node serving that model via gossip, connects through the mesh, and returns the result.</p>
+
+<h3>Python</h3>
+<pre>from arknet_sdk import Wallet, Client
+
+wallet = Wallet.create()
+wallet.save()
+session = wallet.create_session(spending_limit=100_000_000, expires_secs=3600)
+client = Client.connect(session=session)
+
+response = client.infer(
+    model="Qwen/Qwen3-0.6B-Q8_0",
+    prompt="Hi, how are you?",
+    max_tokens=64,
+)
+print(response.text)</pre>
+
+<h3>Rust</h3>
+<pre>use std::time::Duration;
+use arknet_sdk::{Client, ConnectOptions, InferRequest, wallet::Wallet, session::SessionKey};
+
+let wallet = Wallet::create();
+let session = SessionKey::create(&amp;wallet, 100_000_000, Duration::from_secs(3600))?;
+let client = Client::connect(ConnectOptions {
+    session: Some(session),
+    ..Default::default()
+}).await?;
+
+let response = client.infer(InferRequest {
+    model: "Qwen/Qwen3-0.6B-Q8_0".into(),
+    prompt: "Hi, how are you?".into(),
+    max_tokens: 64,
+    ..Default::default()
+}).await?;
+println!("{}", response.text);</pre>
+
+<h3>TypeScript (coming soon)</h3>
+<p>The TypeScript SDK has not yet been updated for the p2p architecture. The <code>npm install arknet-sdk</code> package still works but uses the older HTTP-based API. A p2p-native TypeScript SDK is in development.</p>
+
+<h2>Complete example</h2>
+<p>End-to-end in Python — wallet, session, connect, infer:</p>
+<pre>from arknet_sdk import Wallet, Client
+
+# 1. Create (or load) a wallet
+wallet = Wallet.create()
+wallet.save()
+
+# 2. Create a session key (bounded spending, 1 hour)
+session = wallet.create_session(
+    spending_limit=100_000_000,
+    expires_secs=3600,
+)
+
+# 3. Join the mesh
+client = Client.connect(session=session)
+
+# 4. Run inference
+response = client.infer(
+    model="Qwen/Qwen3-0.6B-Q8_0",
+    prompt="Explain arknet in one sentence.",
+    max_tokens=100,
+)
+print(response.text)</pre>
+
+<h2>How the mesh works</h2>
+<p>Under the hood, the network is a libp2p mesh with two gossip topics:</p>
+<table>
+  <tr><th>Topic</th><th>Purpose</th></tr>
+  <tr><td><code>arknet/pool/offer/1</code></td><td>Compute nodes announce their loaded models (heartbeat every 60s)</td></tr>
+  <tr><td><code>arknet/tx/mempool/1</code></td><td>Transactions broadcast for consensus</td></tr>
+</table>
+<p>When a compute node starts and loads a model, it publishes a <code>PoolOffer</code> message to the gossip mesh. Your SDK subscribes to these offers and maintains a local table of which models are available on which peers. When you call <code>client.infer()</code>, the SDK picks a peer from this table and sends the request directly.</p>
+
+<h3>Relay and hole punching</h3>
+<p>Validators act as <strong>circuit relays</strong>. If your SDK and the compute node are both behind NAT, the initial connection goes through a validator relay. libp2p DCUtR (Direct Connection Upgrade through Relay) then attempts to hole-punch a direct connection. Once hole-punched, subsequent requests travel directly between you and the compute node with no relay overhead.</p>
+
+<h2>Discovery</h2>
+<p>The SDK discovers the network in this order:</p>
+<ol>
+  <li><strong>Seeds</strong> — <code>seeds.json</code> contains multiaddrs of known validators. A hardcoded fallback is compiled into the SDK binary.</li>
+  <li><strong>Bootstrap</strong> — the SDK connects to a seed validator and joins the gossip mesh.</li>
+  <li><strong>Gossip</strong> — the SDK receives <code>PoolOffer</code> messages from compute nodes announcing their models.</li>
+  <li><strong>Inference</strong> — the SDK connects to a compute node offering the requested model.</li>
+</ol>
+<p>No HTTP endpoints are involved at any stage. Everything is libp2p.</p>
+
 <h2>On-chain transactions</h2>
-<p>Use the CLI for all on-chain actions — no raw hex needed:</p>
+<p>Use the CLI for all on-chain actions:</p>
 <pre># Staking
 arknet wallet stake --role compute --amount 50000000000000
 arknet wallet unstake --role compute --amount 50000000000000
 arknet wallet complete-unbond --role compute --unbond-id 1
 arknet wallet redelegate --role compute --to-node 0x... --amount 50000000000000
 
-# Gateway registration
-arknet gateway register --url https://rpc.mynode.com --https
-arknet gateway unregister
-
 # Governance
 arknet governance propose --title "Add new model" --body @proposal.md
 arknet governance vote --proposal 1 --choice yes</pre>
-<p>Under the hood, the CLI builds a borsh-encoded <code>SignedTransaction</code>, signs it with your wallet key, and submits it to <code>/v1/tx</code> on your local node.</p>
+<p>Under the hood, the CLI builds a borsh-encoded <code>SignedTransaction</code>, signs it with your wallet key, and submits it to the local node RPC.</p>
 
 <h3>Transaction types</h3>
 <table>
@@ -182,48 +248,28 @@ arknet governance vote --proposal 1 --choice yes</pre>
   <tr><td><code>GovProposal</code></td><td>Submit governance proposal (10K ARK)</td><td>500,000</td></tr>
   <tr><td><code>GovVote</code></td><td>Vote on a proposal</td><td>30,000</td></tr>
   <tr><td><code>RegisterTeeCapability</code></td><td>Register TEE attestation + enclave pubkey</td><td>200,000</td></tr>
-  <tr><td><code>RegisterGateway</code></td><td>Register as a public gateway (discoverable)</td><td>100,000</td></tr>
-  <tr><td><code>UnregisterGateway</code></td><td>Remove from public gateway registry</td><td>50,000</td></tr>
 </table>
-
-<h2>Building a dApp</h2>
-<p>A typical arknet dApp flow:</p>
-<ol>
-  <li><strong>List models</strong> — <code>GET /v1/models</code> to show available models to your users</li>
-  <li><strong>Submit inference</strong> — <code>POST /v1/chat/completions</code> with the user's prompt</li>
-  <li><strong>Stream response</strong> — Parse SSE chunks and render tokens as they arrive</li>
-  <li><strong>Check status</strong> — <code>GET /v1/status</code> to show chain health in your UI</li>
-</ol>
-<p>The API is identical to OpenAI, so any existing OpenAI-based application works with zero code changes beyond pointing <code>base_url</code> at an arknet node.</p>
 
 <h2>Privacy</h2>
 <ul>
   <li><strong>Transport</strong> — all P2P traffic uses libp2p Noise encryption</li>
   <li><strong>Prompt isolation</strong> — prompts travel only to the assigned compute node, never through consensus or gossip</li>
-  <li><strong>RPC binding</strong> — default <code>127.0.0.1</code> only; operators control exposure</li>
+  <li><strong>No middleman</strong> — there is no gateway or router between you and the compute node. Your SDK connects directly via the mesh.</li>
   <li><strong>Confidential inference (TEE)</strong> — pass <code>prefer_tee: true</code> to route only to nodes running inside Intel TDX / AMD SEV-SNP enclaves. Prompts are encrypted to the enclave's public key (X25519 + ChaCha20-Poly1305) — even the host OS cannot read them</li>
   <li><strong>Local mode</strong> — run your own compute node for zero-trust privacy. No network, no tokens, prompts never leave your machine</li>
 </ul>
-<p>See the <a href="/docs/privacy.html">Privacy &amp; Security</a> page for the full three-tier privacy model, TEE operator guide, and comparison with centralized providers.</p>
+<p>See the <a href="/docs/privacy.html">Privacy &amp; Security</a> page for the full three-tier privacy model.</p>
 
-<h3>Confidential inference example</h3>
-<pre>from arknet_sdk import Client
-
-# Auto-discover an HTTPS + TEE gateway
-client = Client.connect(require_https=True)
-response = client.chat_completion(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Confidential question"}],
-    prefer_tee=True,      # TEE enclaves only
-    require_https=True,   # HTTPS gateways only
-)</pre>
-<p>When <code>prefer_tee</code> is set, the router only picks TEE-capable nodes. If none are available, you get a clear error — no silent downgrade.</p>
+<h2>Bootstrap period</h2>
+<div class="note">
+<p><strong>First 6 months or until 100 validators:</strong> inference is free. No ARK balance needed. Each wallet gets 10 free inference jobs per hour and 100 per day. After the bootstrap period, inference is paid from your ARK balance.</p>
+</div>
 
 <h2>Contributing</h2>
-<p>The codebase is Rust. 615 tests, clippy-clean, fmt-clean.</p>
+<p>The codebase is Rust.</p>
 <pre>git clone https://github.com/st-hannibal/arknet.git
 cd arknet
-cargo test          # 615 tests
+cargo test
 cargo clippy -- -D warnings
 cargo fmt --check</pre>
 <p>Discussions, issues, and PRs welcome on <a href="https://github.com/st-hannibal/arknet">GitHub</a>.</p>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seeders — arknet</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:24px; letter-spacing:-0.02em; }
+  h2 { font-size:22px; margin:36px 0 12px; }
+  h3 { font-size:18px; margin:24px 0 8px; }
+  p { margin:12px 0; } a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  code,pre { font:14px/1.5 "SF Mono",Menlo,Consolas,monospace; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:16px; overflow-x:auto; margin:16px 0; }
+  code { background:var(--code-bg); padding:2px 6px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; }
+  th { color:var(--muted); font-weight:600; }
+  ul,ol { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  .note { background:var(--code-bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:16px 20px; margin:20px 0; }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/node-operators.html">Node Operators</a>
+  <a href="/docs/privacy.html">Privacy</a>
+  <a href="/explorer.html">Explorer</a>
+</nav>
+<main>
+
+<h1>Seeders</h1>
+<p>A seed node is a validator with a stable public IP or DNS name. Seeds are the first contact point for new nodes and SDK clients joining the mesh. When the SDK calls <code>Client.connect()</code>, it loads <code>seeds.json</code> to find its first validator to bootstrap into the network.</p>
+
+<h2>What seeders do</h2>
+<ul>
+  <li><strong>Bootstrap new peers</strong> — new nodes and SDK clients connect to seeds first to join the gossip mesh</li>
+  <li><strong>Circuit relay</strong> — validators (including seeds) act as libp2p circuit relays, helping NAT-ed peers reach each other until DCUtR hole-punches a direct connection</li>
+  <li><strong>Stable entry point</strong> — seeds provide reliable, always-on multiaddrs that are hardcoded into SDK binaries as a fallback</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>Running validator</strong> — you must already be running an arknet validator node (see <a href="/docs/node-operators.html">Node Operators</a>)</li>
+  <li><strong>Stable public IP or DNS</strong> — your address should not change. A static IP or a DNS name (e.g., <code>seed.mynode.com</code>) works.</li>
+  <li><strong>Port 26656 open</strong> — TCP and UDP, publicly reachable</li>
+  <li><strong>High uptime</strong> — seeds should be available 24/7. Downtime degrades bootstrap for the whole network.</li>
+</ul>
+
+<h2>How to become a seeder</h2>
+
+<h3>Step 1: Find your peer ID</h3>
+<p>Your peer ID is logged when your validator starts:</p>
+<pre>[INFO] peer_id=12D3KooW...</pre>
+<p>You can also find it in <code>~/.arknet/</code> or via <code>curl http://localhost:26657/v1/status</code>.</p>
+
+<h3>Step 2: Build your multiaddr</h3>
+<p>Combine your public IP (or DNS name) with the P2P port and peer ID:</p>
+<pre># Static IP
+/ip4/203.0.113.50/tcp/26656/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f
+
+# DNS name
+/dns4/seed.mynode.com/tcp/26656/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f</pre>
+
+<h3>Step 3: Submit a PR</h3>
+<p>Add your entry to <a href="https://github.com/st-hannibal/arknet/blob/main/docs-site/seeds.json"><code>docs-site/seeds.json</code></a>:</p>
+<pre>{
+  "version": 2,
+  "chain_id": "arknet-1",
+  "seeds": [
+    {
+      "multiaddr": "/dns4/arknet.arkengel.com/udp/26656/quic-v1/p2p/12D3KooWFKNZj7VaophcMVbA7QCRexAm7tg9dnADSJ8SxW4sLE1f",
+      "operator": "st-hannibal"
+    },
+    {
+      "multiaddr": "/ip4/203.0.113.50/tcp/26656/p2p/YOUR_PEER_ID",
+      "operator": "your-github-username"
+    }
+  ]
+}</pre>
+
+<h3>Step 4: PR review</h3>
+<p>Your PR will be reviewed and merged once verified. The entry format is:</p>
+<table>
+  <tr><th>Field</th><th>Description</th></tr>
+  <tr><td><code>multiaddr</code></td><td>Your full libp2p multiaddr including peer ID</td></tr>
+  <tr><td><code>operator</code></td><td>Your name or GitHub username (for contact)</td></tr>
+</table>
+
+<div class="note">
+<p><strong>Hardcoded fallback:</strong> The SDK binary has a hardcoded copy of <code>seeds.json</code> compiled at build time. Once your seed is merged and a new SDK version is released, your node becomes a fallback bootstrap point even if <code>arknet.arkengel.com</code> is unreachable.</p>
+</div>
+
+<h2>Current seeds</h2>
+<p>The live seed list is always at <a href="https://arknet.arkengel.com/seeds.json">arknet.arkengel.com/seeds.json</a>.</p>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+</body>
+</html>

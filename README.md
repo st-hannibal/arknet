@@ -13,171 +13,150 @@
 
 ---
 
-Anyone with a computer earns **ARK** for serving AI models. Any developer queries AI through a familiar API — install the SDK, connect, done.
+Anyone with a computer earns **ARK** for serving AI models. Any developer queries AI through a peer-to-peer mesh — install the SDK, connect, infer.
 
-**Use the network** (4 lines):
-```bash
-pip install arknet-sdk
-```
+**Use the network** (Python):
 ```python
 from arknet_sdk import Wallet, Client
 
-wallet = Wallet.create()        # your identity on the network
-wallet.save()                   # saves to ~/.arknet/wallet.key
+wallet = Wallet.create()
+wallet.save()
 
-client = Client.connect(wallet=wallet)    # discovers nodes automatically
-response = client.chat_completion(
-    model="Qwen/Qwen3-0.6B-Q4_K_M",
-    messages=[{"role": "user", "content": "Hello from arknet"}],
+session = wallet.create_session(spending_limit=100_000_000, expires_secs=3600)
+client = Client.connect(session=session)
+response = client.infer(
+    model="Qwen/Qwen3-0.6B-Q8_0",
+    prompt="Hello from arknet",
+    max_tokens=64,
 )
 ```
 
-Your wallet address is your API key. The SDK discovers compute nodes from the blockchain, connects directly via encrypted p2p, and sends your signed request. No gateway sees your prompts — you talk directly to the compute node.
+**Use the network** (Rust):
+```rust
+use std::time::Duration;
+use arknet_sdk::{Client, ConnectOptions, InferRequest, wallet::Wallet, session::SessionKey};
 
-**Run locally** (free, offline, your hardware):
-```python
-from arknet_sdk import Client
-
-client = Client("http://localhost:26657")    # your own node
-response = client.chat_completion(
-    model="Qwen/Qwen3-0.6B-Q4_K_M",
-    messages=[{"role": "user", "content": "Hello from arknet"}],
-)
+let wallet = Wallet::create();
+let session = SessionKey::create(&wallet, 100_000_000, Duration::from_secs(3600))?;
+let client = Client::connect(ConnectOptions {
+    session: Some(session),
+    ..Default::default()
+}).await?;
+let response = client.infer(InferRequest {
+    model: "Qwen/Qwen3-0.6B-Q8_0".into(),
+    prompt: "Hello from arknet".into(),
+    max_tokens: 64,
+    ..Default::default()
+}).await?;
 ```
 
-<details>
-<summary>Advanced: using the raw OpenAI SDK (no arknet SDK needed)</summary>
-
-If you already have an OpenAI integration and don't want to install the arknet SDK, point the OpenAI client at any arknet node directly. You'll need to know a node's URL — find one via `/v1/gateways` on any running node, or run your own.
-
-```python
-from openai import OpenAI
-
-client = OpenAI(base_url="http://localhost:26657/v1", api_key="local")
-response = client.chat.completions.create(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Hello from arknet"}],
-)
-```
-</details>
+Your wallet address is your identity. The SDK joins the p2p mesh as a lightweight libp2p peer, discovers compute nodes via gossip, and sends inference requests directly over Noise-encrypted channels. No HTTP. No gateway. No middleman.
 
 ## How it works
 
 ```
-┌──────────┐  discover  ┌──────────┐  gossip   ┌──────────┐
-│  User /  │ ─────────► │ Gateway  │ ◄──────── │ Compute  │
-│  SDK     │            │ (who has │  "I have  │  (runs   │
-│          │            │  model?) │  model X" │  model)  │
-│          │ ◄────────────────────────────────► │          │
-│          │     direct p2p (Noise-encrypted)   │          │
-└──────────┘                                    └──────────┘
-                     ┌───────────┐        ┌───────────┐
-                     │ Validator │        │ Verifier  │
-                     │ (commits  │        │ (checks   │
-                     │  blocks)  │        │  output)  │
-                     └───────────┘        └───────────┘
+┌──────────┐  bootstrap  ┌───────────┐  gossip   ┌──────────┐
+│  User /  │ ──────────► │ Validator │ ◄──────── │ Compute  │
+│  SDK     │             │ (consensus│  "I have  │  (runs   │
+│          │             │  + relay) │  model X" │  model)  │
+│          │ ◄──────────────────────────────────► │          │
+│          │    direct p2p (Noise-encrypted)      │          │
+└──────────┘    via relay, then hole-punch        └──────────┘
+                     ┌───────────┐
+                     │ Verifier  │
+                     │ (checks   │
+                     │  output)  │
+                     └───────────┘
 ```
 
-1. **Compute nodes** gossip their loaded models to the network.
-2. **User SDK** asks any gateway "who has model X?" and gets compute node addresses.
-3. **SDK connects directly** to the compute node over encrypted p2p — the gateway never sees the prompt or response.
-4. **Verifier** re-executes 5% of jobs deterministically — cheaters get slashed.
-5. **Validator** finalizes the receipt on L1, emission mints ARK.
+1. **Compute nodes** gossip their loaded models on the `arknet/pool/offer/1` topic (heartbeat every 60s).
+2. **SDK** bootstraps from seed validators, subscribes to gossip, and discovers which compute nodes have which models.
+3. **SDK connects** to the compute node through the validator relay (libp2p circuit relay), then DCUtR hole-punches a direct connection.
+4. **Inference** travels directly between the SDK and compute node — the validator never sees the prompt.
+5. **Verifier** re-executes 5% of jobs deterministically — cheaters get slashed.
+6. **Validator** finalizes the receipt on L1, emission mints ARK.
 
-The gateway is a discovery service, not a relay. Your data flows directly between you and the compute node.
+Two node types: **Validator** (consensus + relay + seed) and **Compute** (inference + gossip announce). That's it.
 
-## Two ways to use arknet
+## As a developer
 
-### As a user/developer (no node required)
-
-Install the SDK, create a wallet, connect. The network handles node discovery, direct p2p routing, and verification. During the bootstrap period (first 6 months), inference is **free** (10 jobs/hour, 100 jobs/day per wallet).
+Install the SDK, create a wallet, create a session key, connect, infer. During the bootstrap period (first 6 months or 100 validators), inference is **free**.
 
 ```bash
-pip install arknet-sdk    # or: npm install arknet-sdk / cargo add arknet-sdk
+pip install arknet-sdk    # or: cargo add arknet-sdk
 ```
 ```python
 from arknet_sdk import Wallet, Client
 
-wallet = Wallet.create()     # generate your wallet (one-time)
-wallet.save()                # persists to ~/.arknet/wallet.key
+wallet = Wallet.create()
+wallet.save()
+session = wallet.create_session(spending_limit=100_000_000, expires_secs=3600)
+client = Client.connect(session=session)
 
-client = Client.connect(wallet=wallet)
-response = client.chat_completion(
-    model="Qwen/Qwen3-0.6B-Q4_K_M",
-    messages=[{"role": "user", "content": "Hello from arknet"}],
+response = client.infer(
+    model="Qwen/Qwen3-0.6B-Q8_0",
+    prompt="Hello from arknet",
+    max_tokens=64,
 )
+print(response.text)
 ```
 
-### As a node operator (earn ARK)
+**Session keys** authorize bounded spending from your wallet. Your main key signs a `DelegationCert` granting an ephemeral session key a `spending_limit` and `expiry`. Inference requests are signed by the session key — if compromised, damage is bounded.
 
-Run the binary, expose your P2P port, earn tokens for every verified inference job.
+**TypeScript** SDK (`npm install arknet-sdk`) exists but has not yet been updated for the p2p architecture. Coming soon.
+
+## As a node operator
+
+Run the binary, pick your role, earn ARK.
 
 ```bash
 curl -fsSL https://arknet.arkengel.com/install.sh | sh
-arknet wallet create          # generate your identity
-arknet init --network mainnet
-arknet start --role compute   # start earning ARK
+arknet init
+arknet start --role compute   # or: --role validator
 ```
 
-## Networking for operators
+See the full [Node Operator Guide](https://arknet.arkengel.com/docs/node-operators.html) for step-by-step validator and compute setup.
 
-Every node exposes **one public port** (P2P) and keeps everything else private:
+### Ports
 
 | Port | Default | Public? | Purpose |
 |------|---------|---------|---------|
-| **P2P** | 26656 | **Yes** — open in firewall | Node discovery, block gossip, inference routing. All traffic is Noise-encrypted. |
-| **RPC** | 26657 | **No** — localhost only | Your personal dashboard. Query balances, submit transactions, run the explorer. |
-| **Metrics** | 9090 | **No** — localhost only | Prometheus metrics for your monitoring stack. |
+| **P2P** | 26656 | **Yes** — open in firewall | Node discovery, gossip, relay, consensus, inference. Noise-encrypted. |
+| **RPC** | 26657 | **No** — localhost only | Operator admin. Load models, check status, submit transactions. |
+| **Metrics** | 9090 | **No** — localhost only | Prometheus metrics. |
 
-**If you want to run a public gateway** (let others send inference through you): change RPC bind to `0.0.0.0:26657` in `node.toml` and register on-chain. SDKs discover your gateway automatically. HTTPS gateways earn a 1.2x reward multiplier. You earn the 5% router cut on every job you dispatch.
+### Discovery
 
-### How SDK discovery works
+The SDK discovers compute nodes through the gossip mesh:
 
-SDKs find compute nodes in three steps:
+1. Load seed validator addresses from `seeds.json` (hardcoded fallback in SDK binary)
+2. Bootstrap into the libp2p mesh via a seed validator
+3. Subscribe to `arknet/pool/offer/1` — receive `PoolOffer` messages from compute nodes
+4. Connect to a compute node offering the requested model (relay, then hole-punch)
 
-1. Fetch `https://arknet.arkengel.com/seeds.json` — a static file listing known gateways
-2. Call `/v1/gateways` on a seed to get the full on-chain gateway list
-3. Call `/v1/candidates/<model>` on a gateway to get compute node p2p addresses
-4. Connect directly to the compute node over libp2p (Noise-encrypted QUIC)
-
-The gateway never relays your inference data — it only tells the SDK where to find compute nodes. All prompts and responses travel directly between your machine and the compute node.
-
-To add your gateway to the seed list, submit a PR editing [`docs-site/seeds.json`](docs-site/seeds.json).
+No HTTP endpoints. No gateway. Everything is libp2p.
 
 ### Wallet
 
-Your wallet address is your identity on arknet. Create one with the SDK:
+Ed25519 keypair. 64-byte file at `~/.arknet/wallet.key`. Address = `blake3(pubkey)[0..20]`.
 
 ```python
 from arknet_sdk import Wallet
 wallet = Wallet.create()
-wallet.save()           # ~/.arknet/wallet.key
-print(wallet.address)   # 0xabc123...
+wallet.save()
+print(wallet.address)
 ```
 
-Or with the CLI: `arknet wallet create`
+Or: `arknet wallet create`
 
-The same wallet file works across Python, TypeScript, Rust, and the CLI. During the bootstrap period, each wallet gets 10 free inference jobs per hour and 100 per day. After bootstrap, inference is paid from your ARK balance.
+The same wallet file works across Python, Rust, and the CLI.
 
-```toml
-# ~/.arknet/node.toml — public gateway config
-[roles]
-router  = true
-compute = true
-
-[network]
-p2p_listen = "0.0.0.0:26656"       # always public
-rpc_listen = "0.0.0.0:26657"       # expose to serve users
-```
-
-This is the same model as every blockchain: Bitcoin exposes port 8333, Ethereum 30303, Cosmos 26656. The P2P port is the backbone; the RPC port is operator-optional.
-
-## CLI — every action is a command
+## CLI
 
 ```bash
 # Wallet
-arknet wallet create                    # generate identity
-arknet wallet balance                   # check ARK balance
+arknet wallet create
+arknet wallet balance
 arknet wallet send --to 0x... --amount 1000000000
 
 # Staking
@@ -185,10 +164,6 @@ arknet wallet stake --role compute --amount 50000000000000
 arknet wallet unstake --role compute --amount 50000000000000
 arknet wallet complete-unbond --role compute --unbond-id 1
 arknet wallet redelegate --role compute --to-node 0x... --amount 50000000000000
-
-# Gateway
-arknet gateway register --url https://rpc.mynode.com --https
-arknet gateway unregister
 
 # Governance
 arknet governance propose --title "Add Llama 4" --body @proposal.md
@@ -199,43 +174,42 @@ arknet tee keygen
 arknet tee register --platform intel-tdx --quote-file quote.bin
 ```
 
-No raw transaction hex. Every on-chain action has a CLI command. Run `arknet --help` for the full tree.
-
 ## Why arknet?
 
 | | Centralized (OpenAI, etc.) | arknet |
 |---|---|---|
 | **Censorship** | Single kill switch | Zero-trust, permissionless |
 | **Pricing** | Opaque, changes overnight | On-chain dynamic market |
-| **Revenue** | Goes to one company | 75% to compute, rest split across network |
+| **Revenue** | Goes to one company | 80% to compute, rest split across network |
 | **Models** | Vendor-locked | Open registry, any GGUF model |
 | **Data** | You trust the provider | Encrypted P2P, prompts never touch consensus |
 | **Confidentiality** | Trust the provider | TEE enclaves — even host OS can't read prompts |
+
+## Reward split
+
+Every verified inference job mints ARK:
+
+| Recipient | Share |
+|-----------|-------|
+| **Compute** | 80% |
+| **Verifier** | 7% |
+| **Treasury** | 5% |
+| **Burn** | 3% |
+| **Delegators** | 5% |
 
 ## Privacy — three tiers
 
 | Tier | What it does | Available |
 |------|-------------|-----------|
 | **Transport** | Noise-encrypted P2P. Eavesdroppers see nothing. | Genesis |
-| **Prompt isolation** | Only the assigned compute node sees your prompt. Validators, routers, verifiers see hashes — never content. | Genesis |
+| **Prompt isolation** | Only the assigned compute node sees your prompt. Validators and verifiers see hashes — never content. | Genesis |
 | **Confidential inference (TEE)** | Prompts encrypted to hardware enclave (Intel TDX / AMD SEV-SNP). Even the host OS cannot read them. | Genesis (protocol ready) |
-
-```python
-# Request confidential inference — one extra parameter
-response = client.chat.completions.create(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Confidential question"}],
-    extra_body={"prefer_tee": True},
-)
-```
-
-When `prefer_tee` is set, the router only picks TEE-capable nodes. No silent downgrade — if no TEE node is available, you get a clear error. For absolute privacy, run your own local node (free, no network, prompts never leave your machine).
 
 ## Fair launch
 
 No premine. No investors. No team allocation. No airdrop. Every ARK is minted against verified inference work after genesis. The maintainer holds zero tokens at launch.
 
-**Bootstrap period** (first 6 months or until 100 unique validators): inference is free, `min_stake = 0`, anyone can join. Compute nodes earn ARK from block emission for serving free requests. This bootstraps the token supply from zero — same model as early Bitcoin mining.
+**Bootstrap period** (first 6 months or until 100 unique validators): inference is free, `min_stake = 0`, anyone can join. Compute nodes earn ARK from block emission for serving free requests.
 
 ## Genesis models
 
@@ -255,18 +229,17 @@ Full list with SHA256 digests: [models](https://arknet.arkengel.com/docs/models)
 
 ## Status
 
-**615 tests. 0 blockers. Validator producing blocks.**
-
 | Milestone | Status |
 |-----------|--------|
 | Core protocol (consensus, staking, slashing) | Done |
-| Inference pipeline (escrow → compute → receipt → reward) | Done |
+| Inference pipeline (escrow, compute, receipt, reward) | Done |
 | Economic layer (emission, rewards, governance, pricing) | Done |
-| Model registry + OpenAI API + SDKs | Done |
+| Model registry + SDKs (Python, Rust) | Done |
+| P2P mesh (gossip discovery, relay, hole-punch) | Done |
+| Session keys (DelegationCert, spending limit, expiry) | Done |
 | Bootstrap emission (free-tier mints ARK) | Done |
 | Wallet CLI + block explorer | Done |
-| Multi-node smoke test (17/17 pass) | Done |
-| TEE confidential inference (encrypt, route, decrypt, slash) | Done |
+| TEE confidential inference | Done |
 | **Genesis** | **Next** |
 
 ## License

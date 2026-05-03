@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Node Operators — arknet</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --muted:#8a94a6; --accent:#7aa2ff; --code-bg:#14181e; --border:#222831; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  nav { border-bottom:1px solid var(--border); padding:16px 24px; display:flex; gap:24px; align-items:center; max-width:900px; margin:0 auto; }
+  nav .logo { font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+  nav a { color:var(--muted); text-decoration:none; font-size:14px; } nav a:hover { color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 120px; }
+  h1 { font-size:36px; margin-bottom:24px; letter-spacing:-0.02em; }
+  h2 { font-size:22px; margin:36px 0 12px; }
+  h3 { font-size:18px; margin:24px 0 8px; }
+  p { margin:12px 0; } a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  code,pre { font:14px/1.5 "SF Mono",Menlo,Consolas,monospace; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:16px; overflow-x:auto; margin:16px 0; }
+  code { background:var(--code-bg); padding:2px 6px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; }
+  th { color:var(--muted); font-weight:600; }
+  ul,ol { padding-left:20px; } li { margin:6px 0; color:var(--muted); } li strong { color:var(--fg); }
+  .note { background:var(--code-bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:16px 20px; margin:20px 0; }
+  footer { margin-top:80px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">arknet</a>
+  <a href="/docs/">Docs</a>
+  <a href="/docs/getting-started.html">Get Started</a>
+  <a href="/docs/tokenomics.html">Tokenomics</a>
+  <a href="/docs/models.html">Models</a>
+  <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/node-operators.html">Node Operators</a>
+  <a href="/docs/privacy.html">Privacy</a>
+  <a href="/explorer.html">Explorer</a>
+</nav>
+<main>
+
+<h1>Node Operators</h1>
+<p>arknet has two node types: <strong>Validator</strong> (consensus, seed, relay) and <strong>Compute</strong> (inference, gossip announce). One binary, one install, pick your role.</p>
+
+<h2>Node types</h2>
+<table>
+  <tr><th>Role</th><th>What it does</th><th>Minimum hardware</th></tr>
+  <tr><td><strong>Validator</strong></td><td>Runs Tendermint BFT consensus, produces blocks, acts as circuit relay and seed node for the mesh</td><td>2 vCPU, 2 GB RAM (t3.small or equivalent)</td></tr>
+  <tr><td><strong>Compute</strong></td><td>Runs AI models via llama.cpp, serves inference, announces loaded models via gossip</td><td>Depends on model size (see below)</td></tr>
+</table>
+
+<h2>Install</h2>
+<pre>curl -fsSL https://arknet.arkengel.com/install.sh | sh</pre>
+<p>Or build from source:</p>
+<pre>git clone https://github.com/st-hannibal/arknet.git
+cd arknet
+cargo build --release
+cp target/release/arknet /usr/local/bin/</pre>
+
+<h2>Validator setup</h2>
+<p>Validators run consensus, relay P2P traffic for NAT-ed peers, and serve as seed nodes for the mesh.</p>
+
+<h3>Step 1: Initialize</h3>
+<pre>arknet init</pre>
+<p>This creates <code>~/.arknet/</code> with your node identity (Ed25519 keypair) and default config.</p>
+
+<h3>Step 2: Configure</h3>
+<p>Edit <code>~/.arknet/node.toml</code>:</p>
+<pre>[roles]
+validator = true
+
+[network]
+network = "mainnet"
+bootstrap_peers = []</pre>
+
+<div class="note">
+<p><strong>Bootstrap peers:</strong> For the first validator on a new network, leave <code>bootstrap_peers</code> empty. For subsequent validators, add the multiaddr of at least one existing validator.</p>
+</div>
+
+<h3>Step 3: Copy genesis</h3>
+<p>Download the genesis configuration:</p>
+<pre>curl -fsSL https://raw.githubusercontent.com/st-hannibal/arknet/main/genesis/mainnet/genesis.toml \
+  -o ~/.arknet/genesis.toml</pre>
+
+<h3>Step 4: Start</h3>
+<pre>arknet start --role validator</pre>
+<p>Your peer ID is logged at startup:</p>
+<pre>[INFO] peer_id=12D3KooW...</pre>
+
+<h3>Step 5: Open ports</h3>
+<p>Open port <strong>26656 TCP+UDP</strong> in your firewall. This is the P2P port — all node discovery, gossip, relay, and consensus traffic flows through it.</p>
+
+<h2>Compute setup</h2>
+<p>Compute nodes run AI models and serve inference requests from SDK clients through the mesh.</p>
+
+<h3>Step 1: Initialize</h3>
+<pre>arknet init</pre>
+
+<h3>Step 2: Configure</h3>
+<p>Edit <code>~/.arknet/node.toml</code>:</p>
+<pre>[roles]
+compute = true
+
+[network]
+bootstrap_peers = ["/ip4/&lt;validator-ip&gt;/tcp/26656/p2p/&lt;validator-peer-id&gt;"]</pre>
+<p>Replace <code>&lt;validator-ip&gt;</code> and <code>&lt;validator-peer-id&gt;</code> with an actual validator's address. You can find public seeds at <a href="https://arknet.arkengel.com/seeds.json">seeds.json</a>.</p>
+
+<h3>Step 3: Start</h3>
+<pre>arknet start --role compute</pre>
+
+<h3>Step 4: Load a model</h3>
+<p>Use the local admin RPC to load a model:</p>
+<pre>curl -X POST http://127.0.0.1:26657/v1/models/load \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_ref": "Qwen/Qwen3-0.6B-Q8_0",
+    "url": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
+    "sha256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+    "size_bytes": 639446688
+  }'</pre>
+<p>The node downloads the GGUF file, verifies the SHA-256 digest, and loads it into memory. Once loaded, the model is <strong>auto-announced via gossip heartbeat every 60 seconds</strong> on the <code>arknet/pool/offer/1</code> topic. SDK clients in the mesh will discover it automatically.</p>
+
+<h3>Step 5: Open ports</h3>
+<p>Open port <strong>26656 TCP+UDP</strong> in your firewall.</p>
+
+<div class="note">
+<p><strong>Model list:</strong> See <a href="/docs/models.html">Genesis Models</a> for all available models with SHA-256 digests and download URLs.</p>
+</div>
+
+<h2>Ports</h2>
+<table>
+  <tr><th>Port</th><th>Default</th><th>Public?</th><th>Purpose</th></tr>
+  <tr><td><strong>P2P</strong></td><td>26656 TCP+UDP</td><td><strong>Yes</strong> — must be open</td><td>Node discovery, gossip, relay, consensus, inference. Noise-encrypted.</td></tr>
+  <tr><td><strong>RPC</strong></td><td>26657</td><td>No — localhost only</td><td>Operator admin. Load models, check status, submit transactions.</td></tr>
+  <tr><td><strong>Metrics</strong></td><td>9090</td><td>No — localhost only</td><td>Prometheus scrape endpoint for monitoring.</td></tr>
+</table>
+<p>Only port 26656 needs to be publicly accessible. The RPC and metrics ports bind to localhost by default and should stay that way unless you have a specific reason to expose them.</p>
+
+<h2>Configuration reference</h2>
+<p>Full <code>~/.arknet/node.toml</code> reference:</p>
+<pre>[roles]
+validator = false     # run consensus, act as relay/seed
+compute = false       # run inference, announce models
+
+[network]
+network = "mainnet"                   # chain ID
+p2p_listen = "0.0.0.0:26656"         # P2P bind address
+rpc_listen = "127.0.0.1:26657"       # admin RPC bind address
+metrics_listen = "127.0.0.1:9090"    # Prometheus metrics
+bootstrap_peers = []                  # multiaddrs of known peers</pre>
+
+<h2>Monitoring</h2>
+<p>Check node status via the local admin RPC:</p>
+<pre># Node health
+curl http://localhost:26657/health
+
+# Chain status (height, peers, consensus)
+curl http://localhost:26657/v1/status
+
+# List loaded models
+curl http://localhost:26657/v1/models
+
+# Connected peers
+curl http://localhost:26657/peers</pre>
+
+<h3>Prometheus metrics</h3>
+<p>Scrape <code>http://localhost:9090/metrics</code> with Prometheus. Key metrics:</p>
+<ul>
+  <li><strong><code>arknet_block_height</code></strong> — current chain height</li>
+  <li><strong><code>arknet_connected_peers</code></strong> — number of connected peers</li>
+  <li><strong><code>arknet_inference_requests_total</code></strong> — total inference requests served</li>
+  <li><strong><code>arknet_inference_latency_seconds</code></strong> — histogram of inference latency</li>
+  <li><strong><code>arknet_model_loaded</code></strong> — currently loaded models (label: model_ref)</li>
+</ul>
+
+<h2>Hardware requirements</h2>
+<table>
+  <tr><th>Role</th><th>Minimum</th><th>Notes</th></tr>
+  <tr><td><strong>Validator</strong></td><td>2 vCPU, 2 GB RAM</td><td>No GPU needed. t3.small or equivalent.</td></tr>
+  <tr><td><strong>Compute (small models)</strong></td><td>2 vCPU, 4 GB RAM</td><td>For sub-1B parameter models. t3.medium or equivalent.</td></tr>
+  <tr><td><strong>Compute (medium models)</strong></td><td>4 vCPU, 8 GB RAM, GPU w/ 8 GB VRAM</td><td>For 3B-8B parameter models.</td></tr>
+  <tr><td><strong>Compute (large models)</strong></td><td>8 vCPU, 16 GB RAM, GPU w/ 16+ GB VRAM</td><td>For 13B+ parameter models.</td></tr>
+</table>
+<p>Match the model tier to your hardware. See <a href="/docs/models.html">Genesis Models</a> for model sizes.</p>
+
+<h2>Earning ARK</h2>
+<p>Verified inference jobs mint ARK from the emission schedule. The reward is split:</p>
+<ul>
+  <li><strong>80% compute</strong> — the node that ran the inference</li>
+  <li><strong>7% verifier</strong> — the node that verified the output</li>
+  <li><strong>5% treasury</strong> — governance-controlled fund</li>
+  <li><strong>3% burn</strong> — permanently destroyed (deflationary)</li>
+  <li><strong>5% delegators</strong> — pro-rata by staked amount</li>
+</ul>
+
+<div class="note">
+<p><strong>Bootstrap period (first 6 months or until 100 validators):</strong> No stake required, no cost to users. Run your node and earn ARK from block emission for serving free inference. This is how the token supply bootstraps from zero. See <a href="/docs/tokenomics.html">Tokenomics</a> for details.</p>
+</div>
+
+<h2>Staking</h2>
+<pre># Stake for a role
+arknet wallet stake --role compute --amount 50000000000000
+
+# Begin unstaking (starts 14-day unbonding)
+arknet wallet unstake --role compute --amount 50000000000000
+
+# Finalize unbonding after 14 days
+arknet wallet complete-unbond --role compute --unbond-id 1
+
+# Move stake to a different node (1-day cooldown)
+arknet wallet redelegate --role compute --to-node 0x... --amount 50000000000000</pre>
+
+<h2>Wallet management</h2>
+<pre># Create or show wallet
+arknet wallet create
+arknet wallet address
+arknet wallet balance
+
+# Send ARK
+arknet wallet send --to 0x... --amount 1000000000</pre>
+
+<h2>Becoming a seeder</h2>
+<p>A seed node is a validator with a stable public IP or DNS name that helps new nodes bootstrap into the mesh. See the <a href="/docs/seeders.html">Seeder Guide</a> for how to get your node listed in <code>seeds.json</code>.</p>
+
+<h2>TEE (confidential inference)</h2>
+<p>If your server has Intel TDX or AMD SEV-SNP hardware, you can offer confidential inference. Prompts are encrypted to your enclave and even your host OS cannot read them. TEE-verified jobs earn <strong>1.5x emission rewards</strong>.</p>
+<pre># Generate enclave keypair
+arknet tee keygen
+
+# Register TEE capability on-chain
+arknet tee register --platform intel-tdx --quote-file attestation.bin
+
+# Enable in node.toml
+# [tee]
+# enabled = true
+# platform = "intel-tdx"</pre>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>No peers connecting</strong> — verify port 26656 is open (TCP and UDP). Check <code>curl http://localhost:26657/peers</code>.</li>
+  <li><strong>Model not loading</strong> — check disk space. GGUF files can be large. Verify the SHA-256 matches.</li>
+  <li><strong>Node not earning</strong> — ensure your model is loaded and announced. Check <code>curl http://localhost:26657/v1/models</code> returns your model.</li>
+  <li><strong>Role changes</strong> — roles are set at boot time. Edit <code>node.toml</code> and restart the node. There is no hot role reload.</li>
+</ul>
+
+<footer><p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p></footer>
+</main>
+</body>
+</html>
