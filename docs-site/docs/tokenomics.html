@@ -32,9 +32,9 @@
   <a href="/docs/tokenomics.html">Tokenomics</a>
   <a href="/docs/models.html">Models</a>
   <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/node-operators.html">Node Operators</a>
   <a href="/docs/privacy.html">Privacy</a>
   <a href="/explorer.html">Explorer</a>
-  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
 </nav>
 <main>
 
@@ -69,16 +69,19 @@
 <p>Unspent epoch budgets roll forward — no emission is ever burned or lost.</p>
 
 <h2>Reward distribution</h2>
-<p>Every settled inference job distributes rewards across six recipients:</p>
+<p>Every settled inference job distributes rewards across five recipients:</p>
 <table>
   <tr><th>Recipient</th><th>Share</th><th>Purpose</th></tr>
-  <tr><td><strong>Compute node</strong></td><td>75%</td><td>The operator who ran the model</td></tr>
+  <tr><td><strong>Compute node</strong></td><td>80%</td><td>The operator who ran the model</td></tr>
   <tr><td><strong>Verifier</strong></td><td>7%</td><td>Re-executed the job for correctness</td></tr>
-  <tr><td><strong>Router</strong></td><td>5%</td><td>Dispatched the request</td></tr>
   <tr><td><strong>Treasury</strong></td><td>5%</td><td>Governance-controlled fund</td></tr>
-  <tr><td><strong>Burned</strong></td><td>3%</td><td>Deflationary pressure</td></tr>
   <tr><td><strong>Delegators</strong></td><td>5%</td><td>Pro-rata to stakers on the compute node</td></tr>
+  <tr><td><strong>Burned</strong></td><td>3%</td><td>Deflationary pressure</td></tr>
 </table>
+
+<div class="note">
+<p><strong>Simple split.</strong> The network has two node types (validator and compute) with no routing middlemen. Compute nodes earn the largest share because they do the work — running GPU inference for every request.</p>
+</div>
 
 <h2>Reward multipliers</h2>
 <p>Block rewards scale based on model characteristics and node performance (all integer arithmetic, no floating point):</p>
@@ -109,9 +112,8 @@
 <h2>Staking</h2>
 <p>After bootstrap, every role requires stake:</p>
 <ul>
-  <li><strong>Validators</strong> — secure consensus, earn block-production rewards</li>
+  <li><strong>Validators</strong> — secure consensus, run seed/relay, earn block-production rewards</li>
   <li><strong>Compute nodes</strong> — stake proportional to model size served</li>
-  <li><strong>Routers</strong> — stake to participate in job dispatch</li>
   <li><strong>Verifiers</strong> — stake to earn verification rewards</li>
 </ul>
 <p>Delegation supported: stake on any node operator and earn the 5% delegator cut pro-rata.</p>

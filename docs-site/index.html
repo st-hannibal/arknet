@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>arknet — decentralized AI inference</title>
-<meta name="description" content="Fair-launch decentralized AI inference protocol. No premine. One binary. OpenAI-compatible API. Earn ARK for serving AI models.">
+<meta name="description" content="Run AI models on a global peer-to-peer network. No servers. No middlemen. Your prompts stay private. Earn ARK for serving inference.">
 <meta property="og:title" content="arknet — decentralized AI inference">
-<meta property="og:description" content="Anyone with a computer earns ARK for serving AI models. Any developer queries AI through an OpenAI-compatible API.">
+<meta property="og:description" content="Run AI models on a global peer-to-peer network. No servers. No middlemen. Your prompts stay private.">
 <style>
   :root {
     --bg: #0b0d10;
@@ -39,8 +39,9 @@
   main { max-width: 720px; margin: 0 auto; padding: 60px 24px 120px; }
   h1 { font-size: 48px; letter-spacing: -0.03em; line-height: 1.1; margin-bottom: 16px; }
   h2 { font-size: 22px; margin: 48px 0 12px; letter-spacing: -0.01em; }
+  h3 { font-size: 18px; margin: 24px 0 8px; }
   p { margin: 12px 0; }
-  .lead { color: var(--muted); font-size: 20px; margin-bottom: 32px; line-height: 1.5; }
+  .hero-tagline { color: var(--muted); font-size: 20px; margin-bottom: 32px; line-height: 1.5; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   code, pre { font: 14px/1.5 "SF Mono", Menlo, Consolas, monospace; }
@@ -52,6 +53,7 @@
     overflow-x: auto;
     margin: 16px 0;
   }
+  code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; }
   ul { padding-left: 20px; }
   li { margin: 6px 0; color: var(--muted); }
   li strong { color: var(--fg); }
@@ -108,90 +110,113 @@
   <a href="/docs/tokenomics.html">Tokenomics</a>
   <a href="/docs/models.html">Models</a>
   <a href="/docs/developers.html">Developers</a>
+  <a href="/docs/node-operators.html">Node Operators</a>
   <a href="/docs/privacy.html">Privacy</a>
   <a href="/explorer.html">Explorer</a>
-  <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
 </nav>
 
 <main>
   <span class="badge">Genesis ready</span>
-  <h1>Earn ARK for<br>serving AI models</h1>
-  <p class="lead">arknet is a decentralized network for AI inference. Run a node with any GPU, serve any open model, earn tokens. Developers install the SDK and connect — the network finds nodes automatically.</p>
+  <h1>Decentralized<br>AI Inference</h1>
+  <p class="hero-tagline">Run AI models on a global peer-to-peer network. No servers. No middlemen. Your prompts stay private.</p>
 
-  <pre><span style="color:var(--muted)"># Use the network (SDK finds nodes automatically)</span>
+  <h2>What is arknet?</h2>
+  <p>arknet is a peer-to-peer network for AI inference. Anyone with a GPU can earn ARK tokens by serving AI models. Any developer can use AI through a Python SDK that connects directly to the mesh — no API keys, no centralized servers, no HTTP.</p>
+  <p>The entire network is trustless and encrypted. Your prompts travel over Noise-encrypted P2P channels. Only the compute node running your job sees the prompt — validators relay opaque bytes they cannot read. There is no company in the middle.</p>
+
+  <h2>Quick start</h2>
+  <pre><span style="color:var(--muted)"># Install the SDK and connect to the mesh</span>
 pip install arknet-sdk
 
-from arknet_sdk import Client
-client = Client.connect()
-response = client.chat_completion(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Hello from arknet"}],
-)</pre>
+from arknet_sdk import Wallet, Client
 
-  <pre><span style="color:var(--muted)"># Or run locally (free, offline, your hardware)</span>
-curl -fsSL https://arknet.arkengel.com/install.sh | sh
-arknet start --role compute
+wallet = Wallet.create()
+session = wallet.create_session(spending_limit=100_000_000, expires_secs=3600)
+client = Client.connect(session=session)
+response = client.infer(model="Qwen/Qwen3-0.6B-Q8_0", prompt="Hello!", max_tokens=64)</pre>
 
-from arknet_sdk import Client
-client = Client("http://localhost:26657")
-response = client.chat_completion(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    messages=[{"role": "user", "content": "Hello from arknet"}],
-)</pre>
+  <p>That is it. The SDK joins the gossip mesh, discovers compute nodes via PoolOffer gossip, and sends your inference request through the network. No URLs, no API keys, no HTTP.</p>
 
   <div class="promise">
     <p><strong>Fair launch.</strong> No premine. No investors. No team tokens. No airdrop. Every ARK is minted against verified inference work. The maintainer holds zero tokens at genesis.</p>
   </div>
 
   <h2>How it works</h2>
+  <pre><span style="color:var(--muted)">
+    SDK (your app)
+        |
+        | 1. joins gossip mesh via seed nodes
+        |
+    Validator / Seed
+        |
+        | 2. discovers compute via PoolOffer gossip
+        |    (libp2p relay + hole punching)
+        |
+    Compute Node (GPU)
+        |
+        | 3. runs inference, streams tokens back
+        | 4. receipt submitted to chain
+        |
+    Validator Consensus (BFT)
+        |
+        | 5. verifier audits, reward minted
+        |
+    ARK minted to compute (80%)
+</span></pre>
+
   <div class="grid">
     <div class="card">
       <h3>Compute nodes</h3>
-      <p>Run AI models on your hardware. Earn 75% of the reward for every verified inference job you serve.</p>
+      <p>Run AI models on your hardware. Earn 80% of the reward for every verified inference job you serve.</p>
     </div>
     <div class="card">
       <h3>Verifiers</h3>
       <p>Re-execute 5% of jobs deterministically. Catch cheaters, earn 7% of rewards. Fake output = slashed stake.</p>
     </div>
     <div class="card">
-      <h3>Routers</h3>
-      <p>Dispatch user requests to the best compute node. Earn 5% for orchestrating the network.</p>
-    </div>
-    <div class="card">
       <h3>Validators</h3>
-      <p>Run BFT consensus. Finalize receipts, mint rewards, govern the protocol. Tendermint-based instant finality.</p>
+      <p>Run BFT consensus, serve as seed/relay nodes. Finalize receipts, mint rewards, govern the protocol. Instant finality.</p>
+    </div>
+    <div class="card">
+      <h3>Delegators</h3>
+      <p>Stake ARK on compute nodes and earn 5% of their rewards pro-rata. No hardware required.</p>
     </div>
   </div>
 
-  <h2>One binary, four roles</h2>
-  <p>Every participant runs the same <code>arknet</code> binary. Configure which roles to enable based on your hardware:</p>
+  <h2>One binary, two node types</h2>
+  <p>Every participant runs the same <code>arknet</code> binary. Configure which role to enable based on your hardware:</p>
   <pre>[roles]
-validator = false
-router    = true
-compute   = true     # needs GPU
-verifier  = false</pre>
-  <p>A Raspberry Pi can route. A gaming laptop can compute. A server rack can do everything.</p>
+validator = true    # consensus + seed + relay
+compute   = true    # inference + gossip (needs GPU)</pre>
+  <p>A server can validate. A gaming laptop can compute. Both roles can run together on the same machine.</p>
 
-  <h2>Simple networking</h2>
-  <p>Open <strong>one port</strong> (26656 P2P) — that's it. Your node discovers peers, gossips blocks, and routes inference automatically. All P2P traffic is Noise-encrypted. The RPC port (26657) stays private to you unless you choose to run a public gateway.</p>
+  <h2>Pure peer-to-peer</h2>
+  <p>There are no HTTP endpoints, no gateways, no middlemen. The SDK joins the libp2p gossip mesh directly, discovers compute nodes through PoolOffer messages, and routes inference via relay + hole punching. All traffic is Noise-encrypted end-to-end. Validators relay encrypted bytes they cannot read.</p>
 
-  <h2>Three-tier privacy</h2>
-  <p>Your prompts are private at every layer:</p>
-  <div class="grid">
-    <div class="card">
-      <h3>Transport encryption</h3>
-      <p>All P2P traffic uses Noise protocol. Network eavesdroppers see nothing.</p>
-    </div>
-    <div class="card">
-      <h3>Prompt isolation</h3>
-      <p>Only the assigned compute node sees your prompt. Validators, routers, and verifiers see hashes — never content.</p>
-    </div>
-    <div class="card">
-      <h3>Confidential inference (TEE)</h3>
-      <p>Pass <code>prefer_tee: true</code> to route to hardware enclaves (Intel TDX / AMD SEV-SNP). Even the host OS cannot see your prompt — encrypted in enclave memory.</p>
-    </div>
-  </div>
-  <p>For absolute privacy: run your own local node. Inference runs on your hardware, no network, no tokens, prompts never leave your machine. <a href="/docs/privacy.html">Full privacy model</a></p>
+  <h2>Session keys</h2>
+  <p>Your wallet creates ephemeral session keys with a spending limit and expiry. Use session keys for daily SDK calls — if one is compromised, the attacker can only spend the session allowance, not drain your wallet.</p>
+  <pre>session = wallet.create_session(
+    spending_limit=100_000_000,  <span style="color:var(--muted)"># 0.1 ARK</span>
+    expires_secs=3600            <span style="color:var(--muted)"># 1 hour</span>
+)</pre>
+
+  <h2>For developers</h2>
+  <ul>
+    <li><strong><a href="/docs/getting-started.html">Getting started</a></strong> — install the SDK and run your first inference in 2 minutes</li>
+    <li><strong><a href="/docs/developers.html">Developer guide</a></strong> — wallets, session keys, model discovery, streaming</li>
+    <li><strong><a href="/docs/privacy.html">Privacy model</a></strong> — how encryption and TEE protect your prompts</li>
+    <li><strong><a href="/docs/models.html">Supported models</a></strong> — the 10 models available at genesis</li>
+  </ul>
+
+  <h2>For node operators</h2>
+  <ul>
+    <li><strong><a href="/docs/node-operators.html">Node operator guide</a></strong> — install, configure, and run a compute or validator node</li>
+    <li><strong><a href="/docs/tokenomics.html">Tokenomics</a></strong> — ARK supply, emission schedule, reward split, staking</li>
+  </ul>
+
+  <h2>Fair launch</h2>
+  <p>arknet launches with zero tokens in circulation. No premine. No investors. No team allocation. No airdrop. Every ARK is minted against verified inference work — the same model as early Bitcoin mining.</p>
+  <p>During a 6-month bootstrap period, inference is free and rate-limited. Compute nodes earn ARK from block emission for serving free requests. By the end of bootstrap, enough ARK circulates for the paid economy to activate naturally.</p>
 
   <h2>10 models at genesis</h2>
   <p>From edge devices to data centers — all GGUF format, verified by SHA-256:</p>
@@ -208,11 +233,11 @@ verifier  = false</pre>
     <div class="card stat"><div class="num">1B</div><div class="label">ARK hard cap</div></div>
     <div class="card stat"><div class="num">615</div><div class="label">Tests passing</div></div>
     <div class="card stat"><div class="num">0</div><div class="label">Tokens premined</div></div>
-    <div class="card stat"><div class="num">75%</div><div class="label">To compute operators</div></div>
+    <div class="card stat"><div class="num">80%</div><div class="label">To compute operators</div></div>
   </div>
 
   <footer>
-    <p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a> · <a href="https://github.com/st-hannibal/arknet/discussions">Discussions</a></p>
+    <p>Apache-2.0 · <a href="https://github.com/st-hannibal/arknet">GitHub</a></p>
   </footer>
 </main>
 
