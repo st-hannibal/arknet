@@ -195,6 +195,11 @@ async fn handle_inference_request(
         arknet_common::types::JobId::new(out)
     };
 
+    let billing_addr = req.billing_address();
+    let model_hash = req.model_hash;
+    let prompt_len = req.prompt.len();
+    let seed = req.seed;
+
     let stream = match runner.run(req, &model_ref, pool_id, job_id, now).await {
         Ok(s) => s,
         Err(e) => {
@@ -229,7 +234,35 @@ async fn handle_inference_request(
         .await
     {
         warn!(error = %e, "failed to send inference response");
+        return;
     }
+
+    // Count output tokens from the events for the receipt.
+    let mut output_tokens: u32 = 0;
+    for raw in &response.events {
+        if let Ok(ev) = borsh::from_slice::<arknet_compute::wire::InferenceJobEvent>(raw) {
+            if matches!(ev, arknet_compute::wire::InferenceJobEvent::Token { .. }) {
+                output_tokens += 1;
+            }
+        }
+    }
+
+    // Submit receipt to the chain via gossip so the compute node earns ARK.
+    let end_ms = arknet_router::failover::now_ms();
+    submit_receipt(
+        &net,
+        job_id,
+        pool_id,
+        billing_addr,
+        model_hash,
+        &model_ref,
+        prompt_len,
+        seed,
+        output_tokens,
+        now,
+        end_ms,
+    )
+    .await;
 }
 
 /// Publish a `PoolOffer` on gossip so routers discover this compute node.
@@ -260,5 +293,103 @@ pub async fn announce_models(
         warn!(error = %e, "failed to publish pool offer");
     } else {
         info!(models = ?offer.model_refs, "published pool offer");
+    }
+}
+
+/// Build and gossip an `InferenceReceipt` so the chain can mint ARK.
+#[allow(clippy::too_many_arguments)]
+async fn submit_receipt(
+    network: &NetworkHandle,
+    job_id: arknet_common::types::JobId,
+    pool_id: PoolId,
+    billing_addr: Address,
+    model_hash: [u8; 32],
+    model_ref: &ModelRef,
+    prompt_len: usize,
+    seed: u64,
+    output_tokens: u32,
+    start_ms: u64,
+    end_ms: u64,
+) {
+    use arknet_chain::receipt::{
+        ComputeProof, InferenceReceipt, Quantization, ReceiptBatch, VerificationTier,
+    };
+    use arknet_common::types::{NodeId, Signature};
+
+    let local_peer = network.local_peer_id();
+    let compute_node = {
+        let digest = blake3::hash(&local_peer.to_bytes());
+        let mut out = [0u8; 32];
+        out.copy_from_slice(digest.as_bytes());
+        NodeId::new(out)
+    };
+
+    let input_hash = *blake3::hash(&prompt_len.to_le_bytes()).as_bytes();
+    let output_hash = *blake3::hash(&output_tokens.to_le_bytes()).as_bytes();
+
+    let receipt = InferenceReceipt {
+        job_id,
+        pool_id,
+        model_id: model_ref.to_string(),
+        model_hash,
+        quantization: Quantization::Q8_0,
+        user_address: billing_addr,
+        router_node: compute_node,
+        compute_node,
+        backup_node: None,
+        input_hash,
+        output_hash,
+        da_reference: None,
+        input_token_count: (prompt_len / 4) as u32,
+        output_token_count: output_tokens,
+        latency_ms: (end_ms.saturating_sub(start_ms)) as u32,
+        total_time_ms: (end_ms.saturating_sub(start_ms)) as u32,
+        seed,
+        compute_proof: ComputeProof::HashChain(vec![]),
+        tee_attestation: None,
+        verification_tier: VerificationTier::Optimistic,
+        prompt_encrypted: false,
+        timestamp_start: start_ms,
+        timestamp_end: end_ms,
+        compute_signature: Signature::ed25519([0u8; 64]),
+        user_signature: Signature::ed25519([0u8; 64]),
+    };
+
+    let batch_bytes = match borsh::to_vec(&receipt) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!(error = %e, "failed to encode receipt");
+            return;
+        }
+    };
+    let batch_id = *blake3::hash(&batch_bytes).as_bytes();
+    let merkle_root = batch_id;
+
+    let batch = ReceiptBatch {
+        batch_id,
+        receipts: vec![receipt],
+        merkle_root,
+        aggregator: compute_node,
+        signature: Signature::ed25519([0u8; 64]),
+    };
+
+    let tx = arknet_chain::transactions::Transaction::ReceiptBatch(batch);
+    let signed = arknet_chain::transactions::SignedTransaction {
+        tx,
+        signer: arknet_common::types::PubKey::ed25519([0u8; 32]),
+        signature: Signature::ed25519([0u8; 64]),
+    };
+    let signed_bytes = match borsh::to_vec(&signed) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!(error = %e, "failed to encode signed receipt tx");
+            return;
+        }
+    };
+
+    let topic = arknet_network::gossip::tx_mempool().to_string();
+    match network.publish(topic, signed_bytes).await {
+        Ok(()) => info!(%job_id, tokens = output_tokens, "receipt submitted to chain"),
+        Err(e) => warn!(error = %e, "failed to gossip receipt tx"),
     }
 }

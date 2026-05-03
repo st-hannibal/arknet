@@ -76,22 +76,20 @@ async fn main() {
             };
             for raw in &ir.events {
                 match borsh::from_slice::<arknet_compute::wire::InferenceJobEvent>(raw) {
-                    Ok(ev) => {
-                        match ev {
-                            arknet_compute::wire::InferenceJobEvent::Token { text, .. } => {
-                                print!("{text}");
-                            }
-                            arknet_compute::wire::InferenceJobEvent::Stop { reason, .. } => {
-                                println!("\n[stop: {reason:?}]");
-                            }
-                            arknet_compute::wire::InferenceJobEvent::Error { message, .. } => {
-                                println!("\n[error: {message}]");
-                            }
-                            arknet_compute::wire::InferenceJobEvent::Busy { .. } => {
-                                println!("\n[busy]");
-                            }
+                    Ok(ev) => match ev {
+                        arknet_compute::wire::InferenceJobEvent::Token { text, .. } => {
+                            print!("{text}");
                         }
-                    }
+                        arknet_compute::wire::InferenceJobEvent::Stop { reason, .. } => {
+                            println!("\n[stop: {reason:?}]");
+                        }
+                        arknet_compute::wire::InferenceJobEvent::Error { message, .. } => {
+                            println!("\n[error: {message}]");
+                        }
+                        arknet_compute::wire::InferenceJobEvent::Busy { .. } => {
+                            println!("\n[busy]");
+                        }
+                    },
                     Err(e) => println!("[decode event: {e}]"),
                 }
             }
