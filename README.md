@@ -4,10 +4,10 @@
 </p>
 
 <p align="center">
-  <a href="https://arknet.arkengel.com">Website</a> ·
-  <a href="https://arknet.arkengel.com/docs">Docs</a> ·
-  <a href="https://arknet.arkengel.com/tokenomics">Tokenomics</a> ·
-  <a href="https://arknet.arkengel.com/explorer.html">Explorer</a> ·
+  <a href="https://docs.arknet.arkengel.com">Website</a> ·
+  <a href="https://docs.arknet.arkengel.com/docs">Docs</a> ·
+  <a href="https://docs.arknet.arkengel.com/tokenomics">Tokenomics</a> ·
+  <a href="https://docs.arknet.arkengel.com/explorer.html">Explorer</a> ·
   <a href="https://github.com/st-hannibal/arknet/discussions">Forum</a>
 </p>
 
@@ -110,12 +110,12 @@ print(response.text)
 Run the binary, pick your role, earn ARK.
 
 ```bash
-curl -fsSL https://arknet.arkengel.com/install.sh | sh
+curl -fsSL https://docs.arknet.arkengel.com/install.sh | sh
 arknet init
 arknet start --role compute   # or: --role validator
 ```
 
-See the full [Node Operator Guide](https://arknet.arkengel.com/docs/node-operators.html) for step-by-step validator and compute setup.
+See the full [Node Operator Guide](https://docs.arknet.arkengel.com/docs/node-operators.html) for step-by-step validator and compute setup.
 
 ### Ports
 
@@ -225,7 +225,7 @@ No premine. No investors. No team allocation. No airdrop. Every ARK is minted ag
 | Prosumer | Qwen3.6 27B | 16.8 GB |
 | Server | Qwen3.6 35B MoE | 22.1 GB |
 
-Full list with SHA256 digests: [models](https://arknet.arkengel.com/docs/models)
+Full list with SHA256 digests: [models](https://docs.arknet.arkengel.com/docs/models)
 
 ## Status
 

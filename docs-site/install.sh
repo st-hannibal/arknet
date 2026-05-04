@@ -2,7 +2,7 @@
 # arknet installer — downloads the latest release binary.
 #
 # Usage:
-#   curl -fsSL https://arknet.arkengel.com/install.sh | sh
+#   curl -fsSL https://docs.arknet.arkengel.com/install.sh | sh
 #
 # Detects OS/arch, downloads the matching binary from GitHub Releases,
 # places it in /usr/local/bin (or ~/.local/bin if no sudo).
